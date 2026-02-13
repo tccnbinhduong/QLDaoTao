@@ -9,7 +9,7 @@ const Management: React.FC = () => {
     teachers, subjects, majors, classes,
     addTeacher, updateTeacher, deleteTeacher, importTeachers,
     addSubject, updateSubject, deleteSubject, importSubjects,
-    addClass, updateClass, deleteClass 
+    addClass, updateClass, deleteClass, importClasses
   } = useApp();
   
   const [activeTab, setActiveTab] = useState<'teachers' | 'subjects' | 'classes'>('teachers');
@@ -278,8 +278,7 @@ const Management: React.FC = () => {
                const missingMajors = newClasses.filter(c => !c.majorId).length;
                
                if (newClasses.length > 0) {
-                   // Add classes one by one as importClasses is not available in context
-                   newClasses.forEach(c => addClass(c));
+                   importClasses(newClasses);
                    
                    let msg = `Đã nhập thành công ${newClasses.length} lớp.`;
                    if (missingMajors > 0) {

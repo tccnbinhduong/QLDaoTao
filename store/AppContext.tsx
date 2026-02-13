@@ -17,6 +17,7 @@ interface AppContextType extends AppState {
   addClass: (c: Omit<ClassEntity, 'id'>) => void;
   updateClass: (id: string, c: Partial<ClassEntity>) => void;
   deleteClass: (id: string) => void;
+  importClasses: (classes: Omit<ClassEntity, 'id'>[]) => void;
   addStudent: (s: Omit<Student, 'id'>) => void;
   updateStudent: (id: string, s: Partial<Student>) => void;
   deleteStudent: (id: string) => void;
@@ -83,9 +84,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem('eduScheduleData', JSON.stringify(state));
     } catch (error) {
       console.error("Storage Limit Exceeded", error);
-      // Optional: Emit a custom event or use a global toast if available.
-      // For now, console log is sufficient to prevent crash, user will realize when save fails if we don't alert annoyingly.
-      // But for "stable app", an alert on failure is better than silent failure.
       alert("Cảnh báo: Bộ nhớ trình duyệt đã đầy! Dữ liệu mới chưa được lưu. Vui lòng xóa bớt tài liệu hoặc sao lưu và reset hệ thống.");
     }
   }, [state]);
@@ -140,6 +138,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteClass = (id: string) => {
     setState(prev => ({ ...prev, classes: prev.classes.filter(c => c.id !== id) }));
   };
+  const importClasses = (newClasses: Omit<ClassEntity, 'id'>[]) => {
+      setState(prev => ({
+          ...prev,
+          classes: [...prev.classes, ...newClasses.map(c => ({...c, id: generateId()}))]
+      }));
+  }
 
   const addStudent = (s: Omit<Student, 'id'>) => {
     setState(prev => ({ ...prev, students: [...prev.students, { ...s, id: generateId() }] }));
@@ -208,7 +212,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addTeacher, updateTeacher, deleteTeacher, importTeachers,
       addSubject, updateSubject, deleteSubject, importSubjects,
       addSchedule, updateSchedule, deleteSchedule, 
-      addClass, updateClass, deleteClass,
+      addClass, updateClass, deleteClass, importClasses,
       addStudent, updateStudent, deleteStudent, importStudents,
       addDocument, deleteDocument,
       loadData, resetData

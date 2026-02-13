@@ -11,7 +11,10 @@ export const getSessionFromPeriod = (startPeriod: number): 'Sáng' | 'Chiều' |
 
 // Helper for parsing YYYY-MM-DD to Local Date
 export const parseLocal = (dateStr: string): Date => {
-  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!dateStr) return new Date();
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return new Date();
+  const [y, m, d] = parts.map(Number);
   return new Date(y, m - 1, d);
 };
 
@@ -47,12 +50,22 @@ export const checkConflict = (
         }
 
         // Shared Subject Logic:
-        // If the subject is marked as 'Shared', we ignore other conflict rules (Room, Teacher, other Class schedules).
+        // If the subject is marked as 'Shared', we ignore other conflict rules ONLY IF
+        // the existing item is ALSO the same shared subject instance (Same Subject, Same Teacher, Same Room).
         if (isNewItemShared) {
-            continue; 
+            const isSameSharedInstance = 
+                item.subjectId === newItem.subjectId &&
+                item.teacherId === newItem.teacherId &&
+                item.roomId === newItem.roomId;
+
+            if (isSameSharedInstance) {
+                // This is a sibling class in the same shared session. Allow overlap.
+                continue; 
+            }
+            // If it's a shared subject but different teacher/room, fall through to standard checks.
         }
 
-        // Standard Checks for Normal Subjects
+        // Standard Checks for Normal Subjects (or non-matching Shared Subjects)
         if (item.roomId === newItem.roomId) {
              return { hasConflict: true, message: `Trùng phòng học: ${item.roomId} đã có lớp.` };
         }
