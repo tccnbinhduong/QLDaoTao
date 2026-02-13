@@ -94,6 +94,14 @@ export interface TeacherStat {
   history: { date: string; periods: number; className: string }[];
 }
 
+// NEW: Template Type for Export
+export interface ExportTemplate {
+  id: string;
+  name: string;
+  type: 'payment_word'; // Can be extended
+  content: string; // Base64 Data URL
+}
+
 // Global App State Interface
 export interface AppState {
   teachers: Teacher[];
@@ -103,4 +111,5 @@ export interface AppState {
   schedules: ScheduleItem[];
   majors: Major[];
   documents: DocumentItem[];
+  templates: ExportTemplate[]; // NEW
 }

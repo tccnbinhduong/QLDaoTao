@@ -3,9 +3,9 @@ import { useApp } from '../store/AppContext';
 import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId } from '../utils';
 import { ScheduleItem, ScheduleStatus } from '../types';
 import { format, addDays, isSameDay, getWeek } from 'date-fns';
-import vi from 'date-fns/locale/vi';
+import { vi } from 'date-fns/locale';
 import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 
 const DAYS_OF_WEEK = [
   { label: 'Thứ 2', val: 1 },
@@ -47,6 +47,7 @@ const ScheduleManager: React.FC = () => {
   const [formStartPeriod, setFormStartPeriod] = useState(1);
   const [formPeriodCount, setFormPeriodCount] = useState(3);
   const [formError, setFormError] = useState('');
+  const [formNote, setFormNote] = useState(''); // New Note Field
 
   // NEW: State for Shared Class Selection
   const [selectedSharedClasses, setSelectedSharedClasses] = useState<string[]>([]);
@@ -68,14 +69,71 @@ const ScheduleManager: React.FC = () => {
     return schedules.filter(s => s.classId === selectedClassId);
   }, [schedules, selectedClassId]);
 
-  // Filter subjects based on the selected class's major
+  // Filter subjects based on the selected class's major AND completion status
   const availableSubjects = useMemo(() => {
     const currentClass = classes.find(c => c.id === selectedClassId);
     if (!currentClass) return subjects; 
     
-    // Only return subjects that match the class's majorId
-    return subjects.filter(s => s.majorId === currentClass.majorId);
-  }, [subjects, classes, selectedClassId]);
+    // 1. Get completion data from LocalStorage (Manual & Paid)
+    let manualCompleted: string[] = [];
+    let paidCompleted: string[] = [];
+    try {
+        const manual = localStorage.getItem('manual_completed_subjects');
+        if (manual) manualCompleted = JSON.parse(manual);
+
+        const paid = localStorage.getItem('paid_completed_subjects');
+        if (paid) paidCompleted = JSON.parse(paid);
+    } catch (e) {
+        console.error(e);
+    }
+
+    const currentType = editItem ? editItem.type : formType;
+
+    return subjects.filter(s => {
+        // Must match Major
+        if (s.majorId !== currentClass.majorId) return false;
+
+        // If we are Editing an item, ALWAYS show its current subject (even if completed)
+        // so the dropdown selects it correctly.
+        if (editItem && editItem.subjectId === s.id) return true;
+
+        const uniqueKey = `${s.id}-${currentClass.id}`;
+        
+        // Determine Finished Status
+        const isManuallyFinished = manualCompleted.includes(uniqueKey) || paidCompleted.includes(uniqueKey);
+
+        const relevantSchedules = schedules.filter(sch => 
+            sch.subjectId === s.id && 
+            sch.classId === currentClass.id && 
+            sch.status !== ScheduleStatus.OFF
+        );
+        
+        const learned = relevantSchedules
+            .filter(sch => sch.type === 'class')
+            .reduce((acc, curr) => acc + curr.periodCount, 0);
+
+        const isAutoFinished = learned >= s.totalPeriods;
+        const isFinished = isManuallyFinished || isAutoFinished;
+
+        if (currentType === 'exam') {
+             // Exam Logic:
+             // Hide if NOT Finished (Currently Learning/Upcoming)
+             if (!isFinished) return false;
+             
+             // Hide if Already has Exam
+             const hasExam = relevantSchedules.some(sch => sch.type === 'exam');
+             if (hasExam) return false;
+             
+             return true;
+        } else {
+             // Class Logic:
+             // Hide if Finished
+             if (isFinished) return false;
+             
+             return true;
+        }
+    });
+  }, [subjects, classes, selectedClassId, schedules, editItem, formType]);
 
   // Check if current form subject is shared
   const currentFormSubject = subjects.find(s => s.id === (editItem ? editItem.subjectId : formSubjectId));
@@ -118,6 +176,7 @@ const ScheduleManager: React.FC = () => {
     setFormStartPeriod(1);
     setFormPeriodCount(3);
     setFormError('');
+    setFormNote('');
     setEditItem(null);
     setFormType('class');
     setSelectedSharedClasses([selectedClassId]);
@@ -137,6 +196,20 @@ const ScheduleManager: React.FC = () => {
         s.startPeriod === sourceItem.startPeriod
         // Note: Removed status check to include OFF items in sync
     );
+  };
+
+  // Helper to find the teacher who taught a subject for a class
+  const getTeacherForSubject = (subjId: string, clsId: string) => {
+    const matches = schedules.filter(s => 
+        s.subjectId === subjId && 
+        s.classId === clsId && 
+        s.type === 'class' &&
+        s.status !== ScheduleStatus.OFF
+    );
+    if (matches.length === 0) return '';
+    // Return latest teacher
+    const latest = matches.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+    return latest.teacherId;
   };
 
   // Drag and Drop Handlers
@@ -303,6 +376,7 @@ const ScheduleManager: React.FC = () => {
     const date = editItem ? editItem.date : formDate;
     const startPeriod = editItem ? editItem.startPeriod : formStartPeriod;
     const periodCount = editItem ? editItem.periodCount : formPeriodCount;
+    const note = editItem ? editItem.note : formNote;
 
     if (!teacherId || !subjectId || !roomId || !classId) {
       setFormError('Vui lòng điền đầy đủ thông tin');
@@ -319,6 +393,7 @@ const ScheduleManager: React.FC = () => {
       session: getSessionFromPeriod(startPeriod),
       startPeriod,
       periodCount,
+      note,
     };
 
     if (editItem) {
@@ -792,7 +867,22 @@ const ScheduleManager: React.FC = () => {
               <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-1">Loại lịch</label>
-                    <select value={editItem ? editItem.type : formType} onChange={(e) => !editItem && setFormType(e.target.value as any)} disabled={!!editItem} className="w-full border rounded p-2">
+                    <select 
+                        value={editItem ? editItem.type : formType} 
+                        onChange={(e) => {
+                            if (!editItem) {
+                                const val = e.target.value as 'class' | 'exam';
+                                setFormType(val);
+                                // Auto-select teacher if exam and subject is already selected
+                                if (val === 'exam' && formSubjectId) {
+                                    const suggested = getTeacherForSubject(formSubjectId, selectedClassId);
+                                    if (suggested) setFormTeacherId(suggested);
+                                }
+                            }
+                        }} 
+                        disabled={!!editItem} 
+                        className="w-full border rounded p-2"
+                    >
                         <option value="class">Lịch học</option>
                         <option value="exam">Lịch thi</option>
                     </select>
@@ -819,7 +909,29 @@ const ScheduleManager: React.FC = () => {
 
               <div>
                 <label className="block text-sm font-medium mb-1">Môn học</label>
-                <select value={editItem ? editItem.subjectId : formSubjectId} onChange={(e) => editItem ? setEditItem({...editItem, subjectId: e.target.value}) : setFormSubjectId(e.target.value)} className="w-full border rounded p-2">
+                <select 
+                    value={editItem ? editItem.subjectId : formSubjectId} 
+                    onChange={(e) => {
+                        const val = e.target.value;
+                        if (editItem) {
+                            let updates = { ...editItem, subjectId: val };
+                            // Auto-select teacher if exam
+                            if (editItem.type === 'exam' && val) {
+                                const suggested = getTeacherForSubject(val, editItem.classId);
+                                if (suggested) updates.teacherId = suggested;
+                            }
+                            setEditItem(updates);
+                        } else {
+                            setFormSubjectId(val);
+                            // Auto-select teacher if exam
+                            if (formType === 'exam' && val) {
+                                const suggested = getTeacherForSubject(val, selectedClassId);
+                                if (suggested) setFormTeacherId(suggested);
+                            }
+                        }
+                    }} 
+                    className="w-full border rounded p-2"
+                >
                     <option value="">Chọn môn học...</option>
                     {availableSubjects.map(s => <option key={s.id} value={s.id}>{s.name} ({s.totalPeriods} tiết)</option>)}
                 </select>
@@ -926,6 +1038,17 @@ const ScheduleManager: React.FC = () => {
                     <label className="block text-sm font-medium mb-1">Phòng học</label>
                     <input type="text" value={editItem ? editItem.roomId : formRoom} onChange={(e) => editItem ? setEditItem({...editItem, roomId: e.target.value}) : setFormRoom(e.target.value)} className="w-full border rounded p-2" />
                   </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Ghi chú</label>
+                <input 
+                    type="text" 
+                    value={editItem ? (editItem.note || '') : formNote} 
+                    onChange={(e) => editItem ? setEditItem({...editItem, note: e.target.value}) : setFormNote(e.target.value)} 
+                    placeholder="Ví dụ: Thi thực hành, ..." 
+                    className="w-full border rounded p-2" 
+                />
               </div>
 
               {editItem && (

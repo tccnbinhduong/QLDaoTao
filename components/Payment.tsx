@@ -1,13 +1,18 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
-import * as XLSX from 'xlsx';
-import { Download, Trash2, CheckCircle, CreditCard } from 'lucide-react';
+import XLSX from 'xlsx';
+import { Download, Trash2, CheckCircle, CreditCard, FileText } from 'lucide-react';
 import { format } from 'date-fns';
-import { parseLocal } from '../utils';
+import { parseLocal, base64ToArrayBuffer } from '../utils';
+
+// Libs loaded via CDN in index.html
+declare var PizZip: any;
+declare var window: any;
+declare var saveAs: any;
 
 const Payment: React.FC = () => {
-  const { teachers, schedules, subjects, classes } = useApp();
+  const { teachers, schedules, subjects, classes, templates } = useApp();
 
   // State to track paid/removed subjects (persisted in localStorage)
   // Store format: "subjectId-classId"
@@ -72,28 +77,109 @@ const Payment: React.FC = () => {
     });
   };
 
-  const exportFinishedSubject = (item: any) => {
-    const relevantSchedules = schedules
-      .filter(s => s.subjectId === item.subjectId && s.classId === item.classId && s.status !== ScheduleStatus.OFF)
+  const getFilteredSchedules = (item: any) => {
+      return schedules
+      .filter(s => {
+          if (s.subjectId !== item.subjectId || s.classId !== item.classId || s.status === ScheduleStatus.OFF) return false;
+          
+          if (s.type === 'class') return true;
+          if (s.type === 'exam') {
+              return s.note && s.note.toLowerCase().includes('thực hành');
+          }
+          return false;
+      })
       .sort((a, b) => {
           // Sort by date then startPeriod
           const da = new Date(a.date).getTime();
           const db = new Date(b.date).getTime();
           return da - db || a.startPeriod - b.startPeriod;
       });
+  }
+
+  const exportFinishedSubject = (item: any) => {
+    const relevantSchedules = getFilteredSchedules(item);
 
     const data = relevantSchedules.map(s => ({
        'Giáo viên giảng dạy': teachers.find(t => t.id === s.teacherId)?.name || 'GV đã xóa',
        'Ngày dạy': format(parseLocal(s.date), 'dd/MM/yyyy'),
        'Số tiết dạy': s.periodCount,
-       'Lớp': item.className
+       'Lớp': item.className,
+       'Loại': s.type === 'exam' ? 'Thi' : 'Học',
+       'Ghi chú': s.note || ''
     }));
 
     const ws = XLSX.utils.json_to_sheet(data);
-    ws['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 20 }];
+    ws['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 10 }, { wch: 30 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "ChiTietMonHoc");
     XLSX.writeFile(wb, `ThongKe_${item.subjectName}_${item.className}.xlsx`);
+  };
+
+  const exportWordTemplate = (item: any) => {
+      // 1. Check if templates exist
+      const wordTemplates = templates.filter(t => t.type === 'payment_word');
+      if (wordTemplates.length === 0) {
+          alert('Chưa có mẫu Word nào. Vui lòng vào mục "Hệ thống" để tải lên mẫu .docx!');
+          return;
+      }
+
+      // 2. Select Template (Use first one by default for simplicity, or add a modal selector in future)
+      const template = wordTemplates[0];
+
+      try {
+          // 3. Prepare Data
+          const relevantSchedules = getFilteredSchedules(item);
+          
+          // Dates
+          const startDate = relevantSchedules.length > 0 ? format(parseLocal(relevantSchedules[0].date), 'dd/MM/yyyy') : '...';
+          const endDate = relevantSchedules.length > 0 ? format(parseLocal(relevantSchedules[relevantSchedules.length - 1].date), 'dd/MM/yyyy') : '...';
+          
+          const docData = {
+              teacherName: item.teacherName,
+              subjectName: item.subjectName,
+              className: item.className,
+              totalPeriods: item.totalPeriods,
+              fromDate: startDate,
+              toDate: endDate,
+              schedules: relevantSchedules.map(s => ({
+                  date: format(parseLocal(s.date), 'dd/MM/yyyy'),
+                  periods: s.periodCount,
+                  type: s.type === 'exam' ? 'Thi' : 'Học',
+                  note: s.note || ''
+              }))
+          };
+
+          // 4. Load PizZip & Docxtemplater
+          const PizZip = window.PizZip;
+          const Docxtemplater = window.docxtemplater;
+          const saveAs = window.saveAs;
+
+          if (!PizZip || !Docxtemplater) {
+              alert("Lỗi thư viện. Hãy tải lại trang.");
+              return;
+          }
+
+          const zip = new PizZip(base64ToArrayBuffer(template.content));
+          const doc = new Docxtemplater(zip, {
+              paragraphLoop: true,
+              linebreaks: true,
+          });
+
+          // 5. Render
+          doc.render(docData);
+
+          // 6. Output
+          const out = doc.getZip().generate({
+              type: "blob",
+              mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          });
+
+          saveAs(out, `PhieuThanhToan_${item.subjectName}.docx`);
+
+      } catch (error) {
+          console.error(error);
+          alert("Lỗi khi xuất file Word: " + error);
+      }
   };
 
   return (
@@ -114,8 +200,8 @@ const Payment: React.FC = () => {
                     <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
                             <th className="p-4 text-gray-600 font-semibold text-sm">Thông tin môn học</th>
-                            <th className="p-4 text-gray-600 font-semibold text-sm w-32 text-center">Thao tác</th>
-                            <th className="p-4 text-gray-600 font-semibold text-sm w-48 text-center">Trạng thái thanh toán</th>
+                            <th className="p-4 text-gray-600 font-semibold text-sm w-48 text-center">Thao tác</th>
+                            <th className="p-4 text-gray-600 font-semibold text-sm w-32 text-center">Trạng thái</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -125,17 +211,27 @@ const Payment: React.FC = () => {
                                     {item.subjectName} - GV: {item.teacherName} - Lớp: {item.className}
                                 </td>
                                 <td className="p-4 text-center">
-                                    <button 
-                                        onClick={() => exportFinishedSubject(item)}
-                                        className="bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-3 py-1.5 rounded text-sm font-medium whitespace-nowrap transition-colors flex items-center justify-center mx-auto"
-                                    >
-                                        <Download size={14} className="mr-1" /> Xuất Excel
-                                    </button>
+                                    <div className="flex justify-center gap-2">
+                                        <button 
+                                            onClick={() => exportFinishedSubject(item)}
+                                            className="bg-green-100 hover:bg-green-200 text-green-800 px-3 py-1.5 rounded text-sm font-medium whitespace-nowrap transition-colors flex items-center"
+                                            title="Xuất bảng kê chi tiết (Excel)"
+                                        >
+                                            <Download size={14} className="mr-1" /> Excel
+                                        </button>
+                                        <button 
+                                            onClick={() => exportWordTemplate(item)}
+                                            className="bg-blue-100 hover:bg-blue-200 text-blue-800 px-3 py-1.5 rounded text-sm font-medium whitespace-nowrap transition-colors flex items-center"
+                                            title="Xuất phiếu thanh toán theo mẫu (Word)"
+                                        >
+                                            <FileText size={14} className="mr-1" /> Word
+                                        </button>
+                                    </div>
                                 </td>
                                 <td className="p-4 text-center">
                                     <button
                                         onClick={() => handleDelete(item.uniqueKey)}
-                                        className="bg-red-100 hover:bg-red-200 text-red-700 px-4 py-1.5 rounded text-sm font-medium transition-colors flex items-center justify-center mx-auto"
+                                        className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded text-sm font-medium transition-colors flex items-center justify-center mx-auto"
                                     >
                                         <Trash2 size={14} className="mr-1" /> Xóa
                                     </button>

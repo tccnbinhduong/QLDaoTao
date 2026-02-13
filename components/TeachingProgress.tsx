@@ -3,7 +3,7 @@ import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
 import { Filter, CheckCircle, Clock, BookOpen, User, Calendar } from 'lucide-react';
 import { parseLocal } from '../utils';
-import { isSameDay, startOfDay } from 'date-fns';
+import { isSameDay, startOfDay, format } from 'date-fns';
 
 const TeachingProgress: React.FC = () => {
   const { classes, subjects, schedules } = useApp();
@@ -60,6 +60,18 @@ const TeachingProgress: React.FC = () => {
         sch.status !== ScheduleStatus.OFF
       );
 
+      // Separate Class and Exam schedules
+      const classSchedules = relevantSchedules
+        .filter(s => s.type === 'class')
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      
+      const examSchedule = relevantSchedules.find(s => s.type === 'exam');
+
+      // Calculate Dates
+      const startDate = classSchedules.length > 0 ? format(parseLocal(classSchedules[0].date), 'dd/MM/yyyy') : '--/--/----';
+      const endDate = classSchedules.length > 0 ? format(parseLocal(classSchedules[classSchedules.length - 1].date), 'dd/MM/yyyy') : '--/--/----';
+      const examDate = examSchedule ? format(parseLocal(examSchedule.date), 'dd/MM/yyyy') : 'Chưa xếp';
+
       // Calculate realized periods: Only count periods that have passed or are happening today
       const realizedPeriods = relevantSchedules.reduce((acc, curr) => {
           const sDate = parseLocal(curr.date);
@@ -100,7 +112,10 @@ const TeachingProgress: React.FC = () => {
         percentage, // Keep actual percentage even if manually completed for accuracy
         status,
         isAutoCompleted,
-        isManuallyCompleted
+        isManuallyCompleted,
+        startDate,
+        endDate,
+        examDate
       };
     }).sort((a, b) => {
         // Sort order: In Progress -> Upcoming -> Completed
@@ -185,12 +200,20 @@ const TeachingProgress: React.FC = () => {
              <h3 className="font-bold text-gray-700">Chi tiết môn học</h3>
              <span className="text-sm text-gray-500">Tổng số: {progressData.length} môn</span>
           </div>
+
+          {/* Table Header (Visible on Desktop) */}
+          <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-3 bg-gray-100 border-b text-xs font-bold text-gray-500 uppercase tracking-wider">
+             <div className="col-span-4">Môn học / Giáo viên</div>
+             <div className="col-span-3">Lịch trình & Thi</div>
+             <div className="col-span-3">Tiến độ</div>
+             <div className="col-span-2 text-center">Trạng thái</div>
+          </div>
           
           <div className="divide-y divide-gray-100">
              {progressData.map(subject => (
-                 <div key={subject.id} className="p-4 hover:bg-gray-50 transition flex flex-col md:flex-row items-center gap-4">
-                     {/* Icon & Name */}
-                     <div className="flex items-start gap-3 flex-1 w-full md:w-1/3">
+                 <div key={subject.id} className="p-4 hover:bg-gray-50 transition grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                     {/* Column 1: Icon & Name & Teacher (4 cols) */}
+                     <div className="md:col-span-4 flex items-start gap-3">
                         <div className={`p-2 rounded-lg flex-shrink-0 ${subject.status === 'in-progress' ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400'}`}>
                              <BookOpen size={20} />
                         </div>
@@ -203,28 +226,43 @@ const TeachingProgress: React.FC = () => {
                         </div>
                      </div>
 
-                     {/* Progress Bar */}
-                     <div className="flex-[2] w-full md:w-auto px-2">
+                     {/* Column 2: Dates (3 cols) - NEW */}
+                     <div className="md:col-span-3 text-xs space-y-1.5 text-gray-600 pl-11 md:pl-0">
+                         <div className="flex items-center gap-2">
+                             <span className="w-16 font-semibold text-gray-500">Bắt đầu:</span>
+                             <span className="font-medium">{subject.startDate}</span>
+                         </div>
+                         <div className="flex items-center gap-2">
+                             <span className="w-16 font-semibold text-gray-500">Kết thúc:</span>
+                             <span className="font-medium">{subject.endDate}</span>
+                         </div>
+                         <div className="flex items-center gap-2">
+                             <span className="w-16 font-semibold text-gray-500">Thi:</span>
+                             <span className={`font-medium ${subject.examDate !== 'Chưa xếp' ? 'text-blue-600' : 'text-gray-400 italic'}`}>
+                                 {subject.examDate}
+                             </span>
+                         </div>
+                     </div>
+
+                     {/* Column 3: Progress Bar (3 cols) */}
+                     <div className="md:col-span-3 w-full px-2">
                         <div className="flex justify-between text-xs mb-1.5 font-medium">
-                            <span className="text-gray-600">Tiến độ: {subject.learnedPeriods} / {subject.totalPeriods} tiết</span>
+                            <span className="text-gray-600">{subject.learnedPeriods} / {subject.totalPeriods} tiết</span>
                             <span className={`${subject.status === 'completed' ? 'text-green-600' : subject.status === 'in-progress' ? 'text-blue-600' : 'text-gray-400'}`}>
                                 {subject.percentage}%
                             </span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-3">
+                        <div className="w-full bg-gray-200 rounded-full h-2.5">
                             <div 
-                                className={`h-3 rounded-full transition-all duration-500 ${getProgressBarColor(subject.status)}`} 
+                                className={`h-2.5 rounded-full transition-all duration-500 ${getProgressBarColor(subject.status)}`} 
                                 style={{ width: `${subject.percentage}%` }}
                             ></div>
                         </div>
                      </div>
 
-                     {/* Status Badge & Manual Toggle */}
-                     <div className="w-full md:w-48 flex justify-end md:justify-center items-center gap-3">
-                         <span className={`px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap flex items-center gap-1 ${getStatusColor(subject.status)}`}>
-                            {subject.status === 'completed' && <CheckCircle size={12} />}
-                            {subject.status === 'in-progress' && <Clock size={12} />}
-                            {subject.status === 'upcoming' && <Calendar size={12} />}
+                     {/* Column 4: Status Badge & Manual Toggle (2 cols) */}
+                     <div className="md:col-span-2 w-full flex flex-row md:flex-col lg:flex-row justify-between md:justify-center items-center gap-3">
+                         <span className={`px-2 py-1 rounded text-xs font-bold border whitespace-nowrap flex items-center gap-1 ${getStatusColor(subject.status)}`}>
                             {getStatusLabel(subject.status)}
                          </span>
                          
@@ -233,7 +271,7 @@ const TeachingProgress: React.FC = () => {
                             <button
                                 type="button"
                                 onClick={(e) => toggleManualComplete(e, subject.id)}
-                                className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors shadow-sm whitespace-nowrap cursor-pointer z-10 relative ${
+                                className={`px-2 py-1 rounded text-xs font-semibold transition-colors shadow-sm whitespace-nowrap cursor-pointer ${
                                     subject.isManuallyCompleted 
                                     ? "bg-white text-red-500 border border-red-200 hover:bg-red-50" 
                                     : "bg-blue-600 text-white border border-blue-600 hover:bg-blue-700"

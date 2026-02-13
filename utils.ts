@@ -18,6 +18,17 @@ export const parseLocal = (dateStr: string): Date => {
   return new Date(y, m - 1, d);
 };
 
+// Helper: Base64 string to ArrayBuffer (For Docxtemplater)
+export const base64ToArrayBuffer = (base64: string) => {
+    const binaryString = window.atob(base64.split(',')[1]);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+}
+
 // Conflict Checker
 export const checkConflict = (
   newItem: Omit<ScheduleItem, 'id' | 'status'>,

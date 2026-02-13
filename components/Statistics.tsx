@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
-import { ScheduleStatus } from '../types';
+import { ScheduleStatus, ScheduleItem } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import * as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import { Download, AlertCircle, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { parseLocal } from '../utils';
@@ -12,11 +12,75 @@ const Statistics: React.FC = () => {
   const [showAlert, setShowAlert] = useState(true);
 
   // 1. Missed classes needing makeup
-  const missedClasses = schedules.filter(s => s.status === ScheduleStatus.OFF);
+  // Logic: Filter out if Subject is Finished OR if there are corresponding Makeup sessions
+  const missedClasses = useMemo(() => {
+    const missedMap: Record<string, ScheduleItem[]> = {};
+    const makeupMap: Record<string, number> = {};
+    const completionCache: Record<string, boolean> = {};
+
+    // Helper to check if subject is completed
+    const isSubjectFinished = (subId: string, clsId: string) => {
+        const key = `${subId}-${clsId}`;
+        if (completionCache[key] !== undefined) return completionCache[key];
+
+        const subject = subjects.find(s => s.id === subId);
+        if (!subject) return false;
+
+        const learned = schedules.filter(s => 
+            s.subjectId === subId && 
+            s.classId === clsId && 
+            s.status !== ScheduleStatus.OFF
+        ).reduce((acc, curr) => acc + curr.periodCount, 0);
+
+        const finished = learned >= subject.totalPeriods;
+        completionCache[key] = finished;
+        return finished;
+    };
+
+    // Group items
+    schedules.forEach(s => {
+        const key = `${s.subjectId}-${s.classId}`;
+        if (s.status === ScheduleStatus.OFF) {
+            if (!missedMap[key]) missedMap[key] = [];
+            missedMap[key].push(s);
+        }
+        if (s.status === ScheduleStatus.MAKEUP) {
+            makeupMap[key] = (makeupMap[key] || 0) + 1;
+        }
+    });
+
+    let results: ScheduleItem[] = [];
+
+    Object.keys(missedMap).forEach(key => {
+        const [subId, clsId] = key.split('-');
+        
+        // 1. If subject completed -> No alert
+        if (isSubjectFinished(subId, clsId)) return;
+
+        // 2. If has makeup sessions -> Reduce alerts
+        // We assume makeup sessions cover the earliest missed classes first
+        const makeupsCount = makeupMap[key] || 0;
+        const missedItems = missedMap[key].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        
+        // If we have enough makeups to cover all missed, show nothing.
+        // Otherwise show the remaining earliest ones (or latest? usually earliest are the ones needing attention).
+        if (makeupsCount >= missedItems.length) return;
+
+        const remaining = missedItems.slice(makeupsCount);
+        results = [...results, ...remaining];
+    });
+
+    return results;
+  }, [schedules, subjects]);
 
   // 2. Teacher Stats
   const teacherStats = teachers.map(t => {
-    const taught = schedules.filter(s => s.teacherId === t.id && (s.status === ScheduleStatus.COMPLETED || s.status === ScheduleStatus.ONGOING || s.status === ScheduleStatus.PENDING)); 
+    // Logic: Count classes OR (Exams marked as 'thực hành')
+    const taught = schedules.filter(s => 
+        s.teacherId === t.id && 
+        (s.status === ScheduleStatus.COMPLETED || s.status === ScheduleStatus.ONGOING || s.status === ScheduleStatus.PENDING) &&
+        (s.type === 'class' || (s.type === 'exam' && s.note?.toLowerCase().includes('thực hành')))
+    ); 
     const totalPeriods = taught.reduce((acc, curr) => acc + curr.periodCount, 0);
     return {
       name: t.name,
@@ -69,6 +133,8 @@ const Statistics: React.FC = () => {
             'Ngày dạy': format(parseLocal(s.date), 'dd/MM/yyyy'),
             'Giáo viên': teachers.find(t => t.id === s.teacherId)?.name,
             'Môn học': subjects.find(sub => sub.id === s.subjectId)?.name,
+            'Loại': s.type === 'exam' ? 'Thi' : 'Học',
+            'Ghi chú': s.note || '',
             'Số tiết': s.periodCount,
             'Lớp': classes.find(c => c.id === s.classId)?.name || s.classId
         }));
@@ -119,6 +185,7 @@ const Statistics: React.FC = () => {
                 <Download size={14} className="mr-1"/> Xuất Excel
               </button>
            </div>
+           <p className="text-xs text-gray-500 mb-2 italic">* Chỉ tính các tiết học và các buổi thi được đánh dấu là "thực hành".</p>
            {teacherStats.length > 0 ? (
              <div className="flex-1 min-h-0">
                <ResponsiveContainer width="100%" height="100%">

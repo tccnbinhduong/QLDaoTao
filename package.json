@@ -14,7 +14,10 @@
     "react-dom": "^19.2.4",
     "date-fns": "^4.1.0",
     "react": "^19.2.4",
-    "xlsx": "^0.18.5"
+    "xlsx": "1.2.0",
+    "pizzip": "3.1.4",
+    "docxtemplater": "3.37.11",
+    "file-saver": "2.0.5"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Teacher, Subject, ClassEntity, ScheduleItem, Major, ScheduleStatus, Student, AppState, DocumentItem } from '../types';
+import { Teacher, Subject, ClassEntity, ScheduleItem, Major, ScheduleStatus, Student, AppState, DocumentItem, ExportTemplate } from '../types';
 import { generateId } from '../utils';
 
 interface AppContextType extends AppState {
@@ -24,6 +24,8 @@ interface AppContextType extends AppState {
   importStudents: (students: Omit<Student, 'id'>[]) => void;
   addDocument: (d: Omit<DocumentItem, 'id'>) => void;
   deleteDocument: (id: string) => void;
+  addTemplate: (t: Omit<ExportTemplate, 'id'>) => void;
+  deleteTemplate: (id: string) => void;
   loadData: (data: AppState) => void;
   resetData: () => void;
 }
@@ -58,7 +60,8 @@ const INITIAL_DATA: AppState = {
     { id: '4', name: 'Công nghệ thông tin' },
   ],
   schedules: [],
-  documents: []
+  documents: [],
+  templates: []
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -68,8 +71,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const saved = localStorage.getItem('eduScheduleData');
       if (saved) {
           const parsed = JSON.parse(saved);
-          // Ensure documents array exists for older saved data
+          // Ensure arrays exist for older saved data
           if (!parsed.documents) parsed.documents = [];
+          if (!parsed.templates) parsed.templates = [];
           return parsed;
       }
       return INITIAL_DATA;
@@ -189,12 +193,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setState(prev => ({ ...prev, documents: prev.documents.filter(d => d.id !== id) }));
   };
 
+  // Template actions
+  const addTemplate = (t: Omit<ExportTemplate, 'id'>) => {
+    setState(prev => ({ ...prev, templates: [...prev.templates, { ...t, id: generateId() }] }));
+  };
+  
+  const deleteTemplate = (id: string) => {
+     setState(prev => ({ ...prev, templates: prev.templates.filter(t => t.id !== id) }));
+  };
+
   // NEW: Load entire state (Restore)
   const loadData = (data: AppState) => {
       // Validate structure roughly
       if (data.teachers && data.subjects && data.classes && data.schedules) {
-          // Ensure documents is initialized if restoring from old backup
+          // Ensure arrays is initialized if restoring from old backup
           if (!data.documents) data.documents = [];
+          if (!data.templates) data.templates = [];
           setState(data);
       } else {
           alert('File dữ liệu không hợp lệ!');
@@ -215,6 +229,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addClass, updateClass, deleteClass, importClasses,
       addStudent, updateStudent, deleteStudent, importStudents,
       addDocument, deleteDocument,
+      addTemplate, deleteTemplate,
       loadData, resetData
     }}>
       {children}
