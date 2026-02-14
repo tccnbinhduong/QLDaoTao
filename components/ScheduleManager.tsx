@@ -3,9 +3,9 @@ import { useApp } from '../store/AppContext';
 import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId, base64ToArrayBuffer } from '../utils';
 import { ScheduleItem, ScheduleStatus } from '../types';
 import { format, addDays, isSameDay, getWeek } from 'date-fns';
-import { vi } from 'date-fns/locale/vi';
+import { vi } from 'date-fns/locale';
 import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download, BookOpen, Mail } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import saveAs from 'file-saver';
@@ -726,7 +726,10 @@ const ScheduleManager: React.FC = () => {
           const rooms = Array.from(new Set(relevantSchedules.map(s => s.roomId))).join(', ');
 
           // Determine Location & Map Link based on Class Name
-          const lastChar = currentClass.name.trim().slice(-1);
+          // Strip parentheses to handle names like "Class Name (1)"
+          const cleanName = currentClass.name.trim().replace(/\)$/, '');
+          const lastChar = cleanName.slice(-1);
+
           let location = "";
           let mapLink = "";
 

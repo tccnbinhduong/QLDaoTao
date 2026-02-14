@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import { Download, Trash2, CheckCircle, CreditCard, FileSpreadsheet } from 'lucide-react';
 import { format } from 'date-fns';
 import { parseLocal } from '../utils';
@@ -143,8 +143,9 @@ const Payment: React.FC = () => {
               "{toDate}": endDate,
           };
 
-          // 4. Read Template
-          const wb = XLSX.read(template.content, { type: 'base64' });
+          // 4. Read Template (STRIP BASE64 PREFIX)
+          const base64Content = template.content.split(',')[1];
+          const wb = XLSX.read(base64Content, { type: 'base64' });
           const ws = wb.Sheets[wb.SheetNames[0]];
           
           if (!ws['!ref']) {

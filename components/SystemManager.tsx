@@ -104,12 +104,52 @@ const SystemManager: React.FC = () => {
 
       if (type === 'payment') {
           filename = "Huong_dan_bien_Excel_Thanh_toan.txt";
-          content = `HƯỚNG DẪN CÁC BIẾN MẪU EXCEL (THANH TOÁN GIẢNG DẠY) ...`;
-          // (Keep existing content)
+          content = `HƯỚNG DẪN CÁC BIẾN MẪU EXCEL (THANH TOÁN GIẢNG DẠY)
+-------------------------------------------------------
+Cách dùng: Nhập tên biến (bao gồm cả dấu ngoặc nhọn) vào ô Excel bất kỳ. Hệ thống sẽ tự động thay thế bằng dữ liệu thực tế.
+
+1. THÔNG TIN CHUNG (Thay thế giá trị đơn):
+   {teacherName}        : Tên giáo viên
+   {teacherPhone}       : Số điện thoại
+   {teacherBank}        : Tên ngân hàng
+   {teacherAccount}     : Số tài khoản
+   {subjectName}        : Tên môn học
+   {className}          : Tên lớp
+   {totalPeriods}       : Tổng số tiết theo chương trình
+   {actualTotalPeriods} : Tổng số tiết thực tế đã dạy
+   {fromDate}           : Ngày bắt đầu dạy
+   {toDate}             : Ngày kết thúc dạy
+
+2. BẢNG KÊ CHI TIẾT (Danh sách các buổi học):
+   Để tạo bảng kê, hãy đặt các biến sau vào MỘT HÀNG. Hệ thống sẽ tự động lặp lại hàng này cho mỗi buổi dạy.
+   
+   {date}               : Ngày dạy (dd/MM/yyyy)
+   {periods}            : Số tiết dạy của buổi đó
+   {type}               : Nội dung (Học / Thi)
+   {note}               : Ghi chú
+`;
       } else if (type === 'student') {
           filename = "Huong_dan_bien_Excel_Danh_sach_lop.txt";
-          content = `HƯỚNG DẪN CÁC BIẾN MẪU EXCEL (DANH SÁCH LỚP) ...`;
-          // (Keep existing content)
+          content = `HƯỚNG DẪN CÁC BIẾN MẪU EXCEL (DANH SÁCH LỚP)
+-------------------------------------------------------
+Cách dùng: Nhập tên biến (bao gồm cả dấu ngoặc nhọn) vào ô Excel bất kỳ.
+
+1. THÔNG TIN LỚP HỌC:
+   {className}          : Tên lớp
+   {majorName}          : Tên ngành/nghề
+   {studentCount}       : Sĩ số
+   {schoolYear}         : Niên khóa
+
+2. DANH SÁCH SINH VIÊN (Đặt trên 1 hàng để tạo bảng):
+   {stt}                : Số thứ tự
+   {studentCode}        : Mã số sinh viên
+   {firstName}          : Tên
+   {lastName}           : Họ và tên đệm
+   {fullName}           : Họ và tên đầy đủ
+   {dob}                : Ngày sinh
+   {pob}                : Nơi sinh
+   {phone}              : Số điện thoại
+`;
       } else {
           filename = "Huong_dan_bien_Word_Thu_moi.txt";
           content = `HƯỚNG DẪN CÁC BIẾN MẪU WORD (THƯ MỜI GIẢNG)
