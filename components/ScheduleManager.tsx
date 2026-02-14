@@ -3,9 +3,9 @@ import { useApp } from '../store/AppContext';
 import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId } from '../utils';
 import { ScheduleItem, ScheduleStatus } from '../types';
 import { format, addDays, isSameDay, getWeek } from 'date-fns';
-import { vi } from 'date-fns/locale/vi';
+import { vi } from 'date-fns/locale';
 import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 
 const DAYS_OF_WEEK = [
   { label: 'Thứ 2', val: 1 },

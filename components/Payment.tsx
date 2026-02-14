@@ -1,15 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
-import * as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import { Download, Trash2, CheckCircle, CreditCard, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 import { parseLocal, base64ToArrayBuffer } from '../utils';
-
-// Libs loaded via CDN in index.html
-declare var PizZip: any;
-declare var window: any;
-declare var saveAs: any;
+import PizZip from 'pizzip';
+import Docxtemplater from 'docxtemplater';
+import saveAs from 'file-saver';
 
 const Payment: React.FC = () => {
   const { teachers, schedules, subjects, classes, templates } = useApp();
@@ -149,16 +147,7 @@ const Payment: React.FC = () => {
               }))
           };
 
-          // 4. Load PizZip & Docxtemplater
-          const PizZip = window.PizZip;
-          const Docxtemplater = window.docxtemplater;
-          const saveAs = window.saveAs;
-
-          if (!PizZip || !Docxtemplater) {
-              alert("Lỗi thư viện. Hãy tải lại trang.");
-              return;
-          }
-
+          // 4. Load PizZip & Docxtemplater via Import (Removed window usage)
           const zip = new PizZip(base64ToArrayBuffer(template.content));
           const doc = new Docxtemplater(zip, {
               paragraphLoop: true,
