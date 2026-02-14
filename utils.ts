@@ -105,10 +105,27 @@ export const calculateSubjectProgress = (
   subjectId: string, 
   classId: string, 
   totalPeriods: number, 
-  schedules: ScheduleItem[]
+  schedules: ScheduleItem[],
+  group?: string // NEW: Optional group filter
 ) => {
   const learned = schedules
-    .filter(s => s.subjectId === subjectId && s.classId === classId && s.status !== ScheduleStatus.OFF)
+    .filter(s => {
+        if (s.subjectId !== subjectId || s.classId !== classId || s.status === ScheduleStatus.OFF) return false;
+        
+        // Logic:
+        // If checking progress for a specific group (e.g., "Group 1"):
+        // Count items that are "Shared/Common" (no group) OR items belonging to "Group 1".
+        // Do NOT count items belonging to "Group 2".
+        if (group) {
+            return !s.group || s.group === group;
+        }
+
+        // If checking general progress (no group specified, e.g. Theory or Dashboard overview):
+        // Only count Shared/Common items.
+        // NOTE: If this is too strict for dashboard, we might need a different flag.
+        // But for "Continuing Schedule", this is correct: Theory continues Theory.
+        return !s.group;
+    })
     .reduce((acc, curr) => acc + curr.periodCount, 0);
   
   return {
@@ -130,7 +147,11 @@ export const getSessionSequenceInfo = (
     s.subjectId === currentItem.subjectId && 
     s.classId === currentItem.classId && 
     s.status !== ScheduleStatus.OFF &&
-    s.type === 'class'
+    s.type === 'class' &&
+    // Logic: 
+    // If currentItem has a group (e.g. Grp1), include (Common + Grp1).
+    // If currentItem is Common, include (Common).
+    (currentItem.group ? (!s.group || s.group === currentItem.group) : !s.group)
   ).sort((a, b) => {
     // Sort by Date then by Start Period
     const dateA = new Date(a.date).getTime();

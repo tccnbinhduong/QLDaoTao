@@ -2,12 +2,14 @@ import React, { useState, useRef, useMemo } from 'react';
 import { useApp } from '../store/AppContext';
 import { Student } from '../types';
 import { Plus, Trash2, Edit2, Upload, Save, X, Filter, User, HelpCircle, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown, Search } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import saveAs from 'file-saver';
 import { format } from 'date-fns';
-import { parseLocal } from '../utils';
+import { parseLocal, base64ToArrayBuffer } from '../utils';
 
 const StudentManager: React.FC = () => {
-  const { classes, students, majors, addStudent, updateStudent, deleteStudent, importStudents } = useApp();
+  const { classes, students, majors, templates, addStudent, updateStudent, deleteStudent, importStudents } = useApp();
   const [selectedClassId, setSelectedClassId] = useState<string>(classes[0]?.id || '');
   
   const [showModal, setShowModal] = useState(false);
@@ -165,94 +167,174 @@ const StudentManager: React.FC = () => {
     reader.readAsBinaryString(file);
   };
 
-  const handleExportClassList = () => {
+  const handleExportClassList = async () => {
     if (!currentClass) return;
     const currentMajor = majors.find(m => m.id === currentClass.majorId);
     
-    // Create new Workbook
-    const wb = XLSX.utils.book_new();
-    const wsData = [];
+    // Check for "student_list_excel" template
+    const template = templates.find(t => t.type === 'student_list_excel');
 
-    // 1. Title
-    // Merged Center Title "DANH SÁCH HỌC SINH"
-    wsData.push(["", "", "DANH SÁCH HỌC SINH"]); 
-    wsData.push([""]); // Spacer
+    if (template) {
+        // === USE TEMPLATE EXPORT ===
+        try {
+            const buffer = base64ToArrayBuffer(template.content);
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.load(buffer);
+            const ws = workbook.worksheets[0];
+            if (!ws) throw new Error("File mẫu không hợp lệ");
 
-    // 2. Info Section (Left and Right)
-    // Row 2
-    wsData.push(["Môn:", "", "", "Khóa học:", currentClass.schoolYear]);
-    // Row 3
-    wsData.push(["Lớp:", currentClass.name, "", "Bậc đào tạo:", "Trung cấp chuyên nghiệp"]);
-    // Row 4
-    wsData.push(["Ngành:", currentMajor?.name || "", "", "Loại hình đào tạo:", "Chính quy"]);
-    wsData.push([""]); // Spacer
+            const replacements: Record<string, string> = {
+                '{className}': currentClass.name,
+                '{majorName}': currentMajor?.name || '',
+                '{studentCount}': String(currentClass.studentCount),
+                '{schoolYear}': currentClass.schoolYear,
+            };
 
-    // 3. Table Header
-    // Columns: STT, MSSV, Họ, Tên, Ngày sinh, Trạng thái, Ghi chú
-    wsData.push(["STT", "MSSV", "Họ", "Tên", "Ngày sinh", "Trạng thái", "Ghi chú"]);
+            let listRowIndex = -1;
+            const colMap: Record<string, number> = {};
 
-    // 4. Data Rows
-    // Use sortedStudents for export as well if user wants the sorted list
-    sortedStudents.forEach((s, index) => {
-        // Split name into Last Name (Họ) and First Name (Tên)
-        const parts = s.name.trim().split(' ');
-        const firstName = parts.length > 0 ? parts[parts.length - 1] : '';
-        const lastName = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
-        
-        let dobStr = s.dob;
-        try { dobStr = format(parseLocal(s.dob), 'dd/MM/yyyy'); } catch {}
+            // 1. Scan for placeholders
+            ws.eachRow((row, rowNumber) => {
+                row.eachCell((cell, colNumber) => {
+                    let val = cell.value ? String(cell.value) : '';
+                    
+                    if (val.includes('{stt}')) { listRowIndex = rowNumber; colMap['stt'] = colNumber; }
+                    if (val.includes('{studentCode}')) { listRowIndex = rowNumber; colMap['studentCode'] = colNumber; }
+                    if (val.includes('{firstName}')) { listRowIndex = rowNumber; colMap['firstName'] = colNumber; }
+                    if (val.includes('{lastName}')) { listRowIndex = rowNumber; colMap['lastName'] = colNumber; }
+                    if (val.includes('{fullName}')) { listRowIndex = rowNumber; colMap['fullName'] = colNumber; }
+                    if (val.includes('{dob}')) { listRowIndex = rowNumber; colMap['dob'] = colNumber; }
+                    if (val.includes('{pob}')) { listRowIndex = rowNumber; colMap['pob'] = colNumber; }
+                    if (val.includes('{phone}')) { listRowIndex = rowNumber; colMap['phone'] = colNumber; }
 
-        let statusStr = "Đang học";
-        if (s.status === 'reserved') statusStr = "Bảo lưu";
-        if (s.status === 'dropped') statusStr = "Nghỉ học";
+                    Object.keys(replacements).forEach(key => {
+                        if (val.includes(key)) {
+                            val = val.replace(key, replacements[key]);
+                            cell.value = val;
+                        }
+                    });
+                });
+            });
 
-        wsData.push([
-            index + 1,
-            s.studentCode,
-            lastName,
-            firstName,
-            dobStr,
-            statusStr,
-            "" // Ghi chú empty
-        ]);
-    });
+            // 2. Fill Data
+            if (listRowIndex !== -1 && sortedStudents.length > 0) {
+                const fillRow = (row: any, student: Student, index: number) => {
+                    const parts = student.name.trim().split(' ');
+                    const firstName = parts.length > 0 ? parts[parts.length - 1] : '';
+                    const lastName = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
+                    let dobStr = student.dob;
+                    try { dobStr = format(parseLocal(student.dob), 'dd/MM/yyyy'); } catch {}
 
-    // Add some empty rows if list is small to look good
-    if (sortedStudents.length < 5) {
-        for(let i=0; i< (5 - sortedStudents.length); i++) {
-            wsData.push([sortedStudents.length + i + 1, "", "", "", "", "", ""]);
+                    if (colMap['stt']) row.getCell(colMap['stt']).value = index + 1;
+                    if (colMap['studentCode']) row.getCell(colMap['studentCode']).value = student.studentCode;
+                    if (colMap['firstName']) row.getCell(colMap['firstName']).value = firstName;
+                    if (colMap['lastName']) row.getCell(colMap['lastName']).value = lastName;
+                    if (colMap['fullName']) row.getCell(colMap['fullName']).value = student.name;
+                    if (colMap['dob']) row.getCell(colMap['dob']).value = dobStr;
+                    if (colMap['pob']) row.getCell(colMap['pob']).value = student.pob || '';
+                    if (colMap['phone']) row.getCell(colMap['phone']).value = student.phone || '';
+
+                    // Cleanup tags
+                    row.eachCell((cell: any) => {
+                        const v = String(cell.value);
+                        if (v.includes('{') && v.includes('}')) {
+                             if (['{stt}', '{studentCode}', '{firstName}', '{lastName}', '{fullName}', '{dob}', '{pob}', '{phone}'].some(tag => v.includes(tag))) {
+                                 cell.value = null;
+                             }
+                        }
+                    });
+                };
+
+                // Fill first row
+                fillRow(ws.getRow(listRowIndex), sortedStudents[0], 0);
+
+                // Insert rest
+                for (let i = 1; i < sortedStudents.length; i++) {
+                    const newRow = ws.insertRow(listRowIndex + i, [], 'i');
+                    fillRow(newRow, sortedStudents[i], i);
+                }
+            } else if (listRowIndex !== -1) {
+                 // Clear placeholders if no students
+                 const row = ws.getRow(listRowIndex);
+                 row.eachCell(cell => { if(String(cell.value).includes('{')) cell.value = ''; });
+            }
+
+            const outBuffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([outBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+            saveAs(blob, `DanhSach_${currentClass.name}.xlsx`);
+
+        } catch (error) {
+            console.error(error);
+            alert("Lỗi khi xuất file theo mẫu: " + error);
         }
+
+    } else {
+        // === DEFAULT FALLBACK (No Template) ===
+        // Create new Workbook
+        const wb = XLSX.utils.book_new();
+        const wsData = [];
+
+        // 1. Title
+        wsData.push(["", "", "DANH SÁCH HỌC SINH"]); 
+        wsData.push([""]); // Spacer
+
+        // 2. Info Section
+        wsData.push(["Môn:", "", "", "Khóa học:", currentClass.schoolYear]);
+        wsData.push(["Lớp:", currentClass.name, "", "Bậc đào tạo:", "Trung cấp chuyên nghiệp"]);
+        wsData.push(["Ngành:", currentMajor?.name || "", "", "Loại hình đào tạo:", "Chính quy"]);
+        wsData.push([""]); // Spacer
+
+        // 3. Table Header
+        wsData.push(["STT", "MSSV", "Họ", "Tên", "Ngày sinh", "Trạng thái", "Ghi chú"]);
+
+        // 4. Data Rows
+        sortedStudents.forEach((s, index) => {
+            const parts = s.name.trim().split(' ');
+            const firstName = parts.length > 0 ? parts[parts.length - 1] : '';
+            const lastName = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
+            
+            let dobStr = s.dob;
+            try { dobStr = format(parseLocal(s.dob), 'dd/MM/yyyy'); } catch {}
+
+            let statusStr = "Đang học";
+            if (s.status === 'reserved') statusStr = "Bảo lưu";
+            if (s.status === 'dropped') statusStr = "Nghỉ học";
+
+            wsData.push([
+                index + 1,
+                s.studentCode,
+                lastName,
+                firstName,
+                dobStr,
+                statusStr,
+                "" // Ghi chú empty
+            ]);
+        });
+
+        if (sortedStudents.length < 5) {
+            for(let i=0; i< (5 - sortedStudents.length); i++) {
+                wsData.push([sortedStudents.length + i + 1, "", "", "", "", "", ""]);
+            }
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+        // 5. Apply Merges
+        if (!ws['!merges']) ws['!merges'] = [];
+        ws['!merges'].push(
+            { s: { r: 0, c: 2 }, e: { r: 0, c: 4 } },
+            { s: { r: 3, c: 4 }, e: { r: 3, c: 5 } },
+            { s: { r: 4, c: 4 }, e: { r: 4, c: 5 } }
+        );
+
+        // 6. Column Widths
+        ws['!cols'] = [
+            { wch: 5 }, { wch: 12 }, { wch: 25 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 20 }
+        ];
+
+        XLSX.utils.book_append_sheet(wb, ws, "DanhSachHocSinh");
+        XLSX.writeFile(wb, `DanhSach_${currentClass.name}.xlsx`);
     }
-
-    // Create Sheet
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-    // 5. Apply Merges
-    if (!ws['!merges']) ws['!merges'] = [];
-    ws['!merges'].push(
-        // Title Span (Center roughly over cols C-D)
-        { s: { r: 0, c: 2 }, e: { r: 0, c: 4 } },
-        
-        // Info Section Right side spans (Training info often takes more space)
-        // Row 3 "Trung cấp..."
-        { s: { r: 3, c: 4 }, e: { r: 3, c: 5 } },
-        // Row 4 "Chính quy"
-        { s: { r: 4, c: 4 }, e: { r: 4, c: 5 } }
-    );
-
-    // 6. Column Widths
-    ws['!cols'] = [
-        { wch: 5 },  // STT
-        { wch: 12 }, // MSSV
-        { wch: 25 }, // Họ
-        { wch: 10 }, // Tên
-        { wch: 15 }, // Ngày sinh
-        { wch: 15 }, // Trạng thái
-        { wch: 20 }  // Ghi chú
-    ];
-
-    XLSX.utils.book_append_sheet(wb, ws, "DanhSachHocSinh");
-    XLSX.writeFile(wb, `DanhSach_${currentClass.name}.xlsx`);
   };
 
   const getStatusLabel = (status: string) => {

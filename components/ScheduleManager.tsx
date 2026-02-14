@@ -3,9 +3,9 @@ import { useApp } from '../store/AppContext';
 import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId, base64ToArrayBuffer } from '../utils';
 import { ScheduleItem, ScheduleStatus, Teacher } from '../types';
 import { format, addDays, isSameDay, getWeek } from 'date-fns';
-import { vi } from 'date-fns/locale/vi';
+import { vi } from 'date-fns/locale';
 import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download, BookOpen, Mail } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import saveAs from 'file-saver';
@@ -46,11 +46,12 @@ const ScheduleManager: React.FC = () => {
   const [formSubjectId, setFormSubjectId] = useState('');
   const [formType, setFormType] = useState<'class' | 'exam'>('class');
   const [formRoom, setFormRoom] = useState('');
+  const [formGroup, setFormGroup] = useState(''); // NEW: Practice Group
   const [formDate, setFormDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [formStartPeriod, setFormStartPeriod] = useState(1);
   const [formPeriodCount, setFormPeriodCount] = useState(3);
   const [formError, setFormError] = useState('');
-  const [formNote, setFormNote] = useState(''); // New Note Field
+  const [formNote, setFormNote] = useState(''); 
 
   // NEW: State for Shared Class Selection
   const [selectedSharedClasses, setSelectedSharedClasses] = useState<string[]>([]);
@@ -227,6 +228,7 @@ const ScheduleManager: React.FC = () => {
     setFormTeacherId('');
     setFormSubjectId('');
     setFormRoom('');
+    setFormGroup('');
     setFormDate(format(new Date(), 'yyyy-MM-dd'));
     setFormStartPeriod(1);
     setFormPeriodCount(3);
@@ -305,6 +307,7 @@ const ScheduleManager: React.FC = () => {
             session: getSessionFromPeriod(targetPeriod),
             startPeriod: targetPeriod,
             periodCount: sourceItem.periodCount,
+            group: sourceItem.group, // Copy group
         };
 
         const conflict = checkConflict(newItem, schedules, subjects); 
@@ -365,7 +368,8 @@ const ScheduleManager: React.FC = () => {
             session: getSessionFromPeriod(targetPeriod),
             startPeriod: targetPeriod,
             periodCount: src.periodCount,
-            status: ScheduleStatus.PENDING 
+            status: ScheduleStatus.PENDING,
+            group: src.group, // Copy group
         };
 
         // Check conflicts
@@ -426,6 +430,7 @@ const ScheduleManager: React.FC = () => {
     const teacherId = editItem ? editItem.teacherId : formTeacherId;
     const subjectId = editItem ? editItem.subjectId : formSubjectId;
     const roomId = editItem ? editItem.roomId : formRoom;
+    const group = editItem ? editItem.group : formGroup;
     const classId = editItem ? editItem.classId : selectedClassId;
     const type = editItem ? editItem.type : formType;
     const date = editItem ? editItem.date : formDate;
@@ -444,6 +449,7 @@ const ScheduleManager: React.FC = () => {
       subjectId,
       classId, // Default placeholder
       roomId,
+      group,
       date,
       session: getSessionFromPeriod(startPeriod),
       startPeriod,
@@ -537,10 +543,18 @@ const ScheduleManager: React.FC = () => {
       }
 
       itemsToProcess.forEach(sourceItem => {
-          const key = `${sourceItem.subjectId}-${sourceItem.classId}`;
+          const key = `${sourceItem.subjectId}-${sourceItem.classId}-${sourceItem.group || 'common'}`; // Group specific key
           const previouslyAdded = addedPeriodsMap[key] || 0;
           
-          const progress = calculateSubjectProgress(sourceItem.subjectId, sourceItem.classId, subject.totalPeriods, schedules);
+          // Pass sourceItem.group to calculate progress for this specific group
+          const progress = calculateSubjectProgress(
+              sourceItem.subjectId, 
+              sourceItem.classId, 
+              subject.totalPeriods, 
+              schedules, 
+              sourceItem.group
+          );
+          
           const currentRemaining = progress.remaining - previouslyAdded;
           
           if (currentRemaining > 0) {
@@ -575,8 +589,10 @@ const ScheduleManager: React.FC = () => {
           
           const finalRemaining = progress.remaining - (addedPeriodsMap[key] || 0);
           const className = classes.find(c => c.id === sourceItem.classId)?.name;
+          const groupLabel = sourceItem.group ? `(${sourceItem.group})` : '';
+
           if (finalRemaining <= 4 && finalRemaining > 0) {
-             const msg = `Lớp ${className}: Môn ${subject.name} sắp kết thúc (còn ${finalRemaining} tiết)`;
+             const msg = `Lớp ${className} ${groupLabel}: Môn ${subject.name} sắp kết thúc (còn ${finalRemaining} tiết)`;
              if (!warnings.includes(msg)) warnings.push(msg);
           }
       });
@@ -622,6 +638,7 @@ const ScheduleManager: React.FC = () => {
                     
                     cellText += `\nGV: ${tea?.name || '---'}`;
                     cellText += `\nPH: ${item.roomId}`;
+                    if (item.group) cellText += `\nNhóm: ${item.group}`; // Export Group info
                     cellText += `\nTiết: ${displayCumulative}/${subj?.totalPeriods}`;
                     
                     rowData.push(cellText);
@@ -939,7 +956,10 @@ const ScheduleManager: React.FC = () => {
                        >
                          <div className={`h-full w-full p-2 rounded text-xs ${bgColor} flex flex-col justify-between ${draggedItem?.id === item.id ? 'opacity-50' : ''}`}>
                            <div>
-                             <div className="font-bold text-gray-800 text-sm mb-1">{subject?.name}</div>
+                             <div className="font-bold text-gray-800 text-sm mb-1">
+                                {subject?.name}
+                                {item.group && <span className="ml-1 text-red-600 font-normal">({item.group})</span>}
+                             </div>
                              <div className="text-gray-600 mb-0.5"><span className="font-semibold">GV:</span> {teacher?.name || '---'}</div>
                              <div className="text-gray-600 mb-0.5"><span className="font-semibold">Phòng:</span> {item.roomId}</div>
                              {item.type === 'class' && (
@@ -1188,7 +1208,7 @@ const ScheduleManager: React.FC = () => {
                   </div>
               )}
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-1">Tiết bắt đầu</label>
                     <select 
@@ -1256,9 +1276,25 @@ const ScheduleManager: React.FC = () => {
                         className="w-full border rounded p-2" 
                     />
                   </div>
-                   <div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                  <div>
                     <label className="block text-sm font-medium mb-1">Phòng học</label>
                     <input type="text" value={editItem ? editItem.roomId : formRoom} onChange={(e) => editItem ? setEditItem({...editItem, roomId: e.target.value}) : setFormRoom(e.target.value)} className="w-full border rounded p-2" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Nhóm (Thực hành)</label>
+                    <select 
+                        value={editItem ? (editItem.group || '') : formGroup} 
+                        onChange={(e) => editItem ? setEditItem({...editItem, group: e.target.value}) : setFormGroup(e.target.value)} 
+                        className="w-full border rounded p-2"
+                    >
+                        <option value="">-- Cả lớp --</option>
+                        <option value="Nhóm 1">Nhóm 1</option>
+                        <option value="Nhóm 2">Nhóm 2</option>
+                        <option value="Nhóm 3">Nhóm 3</option>
+                    </select>
                   </div>
               </div>
 

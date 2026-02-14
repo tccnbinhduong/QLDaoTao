@@ -70,6 +70,7 @@ export interface ScheduleItem {
   periodCount: number;
   status: ScheduleStatus;
   note?: string;
+  group?: string; // NEW: Practice Group (Nhóm 1, Nhóm 2...)
 }
 
 export interface Major {

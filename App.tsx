@@ -9,11 +9,15 @@ import SystemManager from './components/SystemManager';
 import TeachingProgress from './components/TeachingProgress';
 import Payment from './components/Payment';
 import DocumentManager from './components/DocumentManager';
-import { LayoutDashboard, CalendarDays, PieChart, GraduationCap, Menu, X, Users, Settings, TrendingUp, CreditCard, FolderOpen } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, PieChart, GraduationCap, Menu, X, Users, Settings, TrendingUp, CreditCard, FolderOpen, RefreshCw } from 'lucide-react';
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<'dashboard' | 'schedule' | 'stats' | 'progress' | 'manage' | 'students' | 'system' | 'payment' | 'documents'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const handleRefresh = () => {
+    window.location.reload();
+  };
 
   const NavItem = ({ view, icon: Icon, label }: { view: typeof activeView, icon: any, label: string }) => (
     <button
@@ -47,6 +51,16 @@ const App: React.FC = () => {
             <NavItem view="students" icon={Users} label="Quản lý HSSV" />
             <NavItem view="documents" icon={FolderOpen} label="Hồ sơ" />
             <NavItem view="system" icon={Settings} label="Hệ thống" />
+
+            <div className="pt-4 mt-4 border-t border-gray-100">
+               <button
+                  onClick={handleRefresh}
+                  className="flex items-center space-x-3 w-full p-3 rounded-lg transition-colors text-gray-600 hover:bg-blue-50 hover:text-blue-700"
+               >
+                  <RefreshCw size={20} />
+                  <span className="font-medium">Làm mới dữ liệu</span>
+               </button>
+            </div>
           </nav>
           <div className="p-4 border-t text-xs text-center text-gray-400">
             v1.0.0
@@ -58,9 +72,14 @@ const App: React.FC = () => {
           {/* Mobile Header */}
           <header className="md:hidden bg-white h-16 border-b flex items-center justify-between px-4">
              <h1 className="font-bold text-blue-800">EduPro</h1>
-             <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
-               {isMobileMenuOpen ? <X /> : <Menu />}
-             </button>
+             <div className="flex items-center gap-2">
+                 <button onClick={handleRefresh} className="p-2 text-gray-600 hover:text-blue-600" title="Làm mới">
+                    <RefreshCw size={20} />
+                 </button>
+                 <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
+                   {isMobileMenuOpen ? <X /> : <Menu />}
+                 </button>
+             </div>
           </header>
 
           <main className="flex-1 overflow-auto p-4 md:p-8">

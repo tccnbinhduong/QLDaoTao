@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
-import { Filter, BookOpen, User, Edit2, Save, X, Calendar, Clock } from 'lucide-react';
+import { Filter, BookOpen, User, Edit2, Save, X, Calendar, Clock, Users } from 'lucide-react';
 import { parseLocal } from '../utils';
 import { isSameDay, startOfDay, format } from 'date-fns';
 
@@ -133,6 +133,54 @@ const TeachingProgress: React.FC = () => {
       
       const examSchedule = relevantSchedules.find(s => s.type === 'exam');
 
+      // --- GROUP LOGIC ---
+      // Identify distinct groups (e.g. "Nhóm 1", "Nhóm 2")
+      const uniqueGroups = Array.from(new Set(classSchedules.map(s => s.group).filter((g): g is string => !!g && g !== ''))) as string[];
+      
+      let groupBreakdown: { name: string, learned: number, percentage: number }[] = [];
+      let totalLearnedForStandard = 0; // Fallback if no groups
+      let isAutoCompleted = false;
+
+      if (uniqueGroups.length > 0) {
+          // Logic: Subject has groups. 
+          // Progress of Group X = (Common/Theory Periods) + (Group X Practice Periods)
+          
+          // 1. Calculate Common (Theory) periods - those without a group
+          const commonSchedules = classSchedules.filter(s => !s.group);
+          const commonRealized = commonSchedules.reduce((acc, curr) => parseLocal(curr.date) <= today ? acc + curr.periodCount : acc, 0);
+
+          // 2. Calculate per group
+          groupBreakdown = uniqueGroups.sort().map(gName => {
+               const gSchedules = classSchedules.filter(s => s.group === gName);
+               const gRealized = gSchedules.reduce((acc, curr) => parseLocal(curr.date) <= today ? acc + curr.periodCount : acc, 0);
+               const totalForGroup = commonRealized + gRealized;
+               
+               return {
+                   name: gName,
+                   learned: totalForGroup,
+                   percentage: Math.min(100, Math.round((totalForGroup / sub.totalPeriods) * 100))
+               };
+          });
+
+          // Auto Complete only if ALL groups are finished
+          isAutoCompleted = groupBreakdown.every(g => g.percentage >= 100);
+
+          // For sorting/display, use the MIN percentage as the "Subject Percentage" to be conservative
+          totalLearnedForStandard = Math.min(...groupBreakdown.map(g => g.learned)); 
+      } else {
+          // Standard Logic (No groups)
+          totalLearnedForStandard = classSchedules.reduce((acc, curr) => {
+              const sDate = parseLocal(curr.date);
+              if (sDate <= today) return acc + curr.periodCount;
+              return acc;
+          }, 0);
+          isAutoCompleted = totalLearnedForStandard >= sub.totalPeriods;
+      }
+
+      const totalPeriods = sub.totalPeriods;
+      const percentage = Math.min(100, Math.round((totalLearnedForStandard / totalPeriods) * 100));
+
+
       // --- DATE CALCULATION (Prioritize Metadata) ---
       let startDate = '--/--/----';
       let endDate = '--/--/----';
@@ -159,22 +207,9 @@ const TeachingProgress: React.FC = () => {
            examDate = format(parseLocal(examSchedule.date), 'dd/MM/yyyy');
       }
 
-      // --- PERCENTAGE CALCULATION ---
-      // Calculate realized periods: Only count periods that have passed or are happening today
-      const realizedPeriods = relevantSchedules.reduce((acc, curr) => {
-          const sDate = parseLocal(curr.date);
-          if (sDate <= today) return acc + curr.periodCount;
-          return acc;
-      }, 0);
-
-      const totalPeriods = sub.totalPeriods;
-      const percentage = Math.min(100, Math.round((realizedPeriods / totalPeriods) * 100));
-
       // --- STATUS CALCULATION ---
-      // 1. Check Auto Logic
       const hasScheduleToday = relevantSchedules.some(s => isSameDay(parseLocal(s.date), today));
       const hasSchedulePast = relevantSchedules.some(s => parseLocal(s.date) < today);
-      const isAutoCompleted = realizedPeriods >= totalPeriods;
 
       let status: 'upcoming' | 'in-progress' | 'completed' = 'upcoming';
 
@@ -190,7 +225,8 @@ const TeachingProgress: React.FC = () => {
 
       return {
         ...sub,
-        learnedPeriods: realizedPeriods,
+        learnedPeriods: totalLearnedForStandard, // Represents conservative progress
+        groupBreakdown, // NEW: Detailed group stats
         percentage, 
         status,
         startDate,
@@ -330,18 +366,41 @@ const TeachingProgress: React.FC = () => {
 
                      {/* Column 3: Progress Bar (3 cols) */}
                      <div className="md:col-span-3 w-full px-2">
-                        <div className="flex justify-between text-xs mb-1.5 font-medium">
-                            <span className="text-gray-600">{subject.learnedPeriods} / {subject.totalPeriods} tiết</span>
-                            <span className={`${subject.status === 'completed' ? 'text-green-600' : subject.status === 'in-progress' ? 'text-blue-600' : 'text-gray-400'}`}>
-                                {subject.percentage}%
-                            </span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2.5">
-                            <div 
-                                className={`h-2.5 rounded-full transition-all duration-500 ${getProgressBarColor(subject.status)}`} 
-                                style={{ width: `${subject.percentage}%` }}
-                            ></div>
-                        </div>
+                        {/* Check if we have group breakdown */}
+                        {subject.groupBreakdown && subject.groupBreakdown.length > 0 ? (
+                            <div className="space-y-2">
+                                <div className="text-[10px] font-bold text-blue-600 uppercase flex items-center mb-1">
+                                    <Users size={10} className="mr-1" /> Tiến độ theo nhóm
+                                </div>
+                                {subject.groupBreakdown.map(gb => (
+                                    <div key={gb.name}>
+                                        <div className="flex justify-between text-[10px] mb-0.5">
+                                            <span className="font-semibold text-gray-600">{gb.name}</span>
+                                            <span className="text-gray-500">{gb.learned}/{subject.totalPeriods} ({gb.percentage}%)</span>
+                                        </div>
+                                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                            <div className={`h-1.5 rounded-full ${getProgressBarColor(subject.status)}`} style={{width: `${gb.percentage}%`}}></div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            // Standard Single Bar
+                            <>
+                                <div className="flex justify-between text-xs mb-1.5 font-medium">
+                                    <span className="text-gray-600">{subject.learnedPeriods} / {subject.totalPeriods} tiết</span>
+                                    <span className={`${subject.status === 'completed' ? 'text-green-600' : subject.status === 'in-progress' ? 'text-blue-600' : 'text-gray-400'}`}>
+                                        {subject.percentage}%
+                                    </span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                    <div 
+                                        className={`h-2.5 rounded-full transition-all duration-500 ${getProgressBarColor(subject.status)}`} 
+                                        style={{ width: `${subject.percentage}%` }}
+                                    ></div>
+                                </div>
+                            </>
+                        )}
                      </div>
 
                      {/* Column 4: Status Badge & Edit Button (2 cols) */}
