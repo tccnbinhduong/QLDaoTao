@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
-import XLSX from 'xlsx';
+import *as XLSX from 'xlsx';
 import { Download, Trash2, CheckCircle, CreditCard, FileSpreadsheet } from 'lucide-react';
 import { format } from 'date-fns';
 import { parseLocal } from '../utils';
