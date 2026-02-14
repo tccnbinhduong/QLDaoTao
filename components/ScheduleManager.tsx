@@ -3,9 +3,9 @@ import { useApp } from '../store/AppContext';
 import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId, base64ToArrayBuffer } from '../utils';
 import { ScheduleItem, ScheduleStatus, Teacher } from '../types';
 import { format, addDays, isSameDay, getWeek } from 'date-fns';
-import { vi } from 'date-fns/locale/vi';
+import { vi } from 'date-fns/locale';
 import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download, BookOpen, Mail } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import saveAs from 'file-saver';
@@ -636,10 +636,12 @@ const ScheduleManager: React.FC = () => {
                     if (item.status === ScheduleStatus.OFF) cellText += ` (NGHỈ)`;
                     else if (item.type === 'exam') cellText = `THI: ${subj?.name}`;
                     
+                    if (item.group) cellText += `\n(${item.group})`; // NEW: Group right after subject
+
                     cellText += `\nGV: ${tea?.name || '---'}`;
-                    cellText += `\nPH: ${item.roomId}`;
-                    if (item.group) cellText += `\nNhóm: ${item.group}`; // Export Group info
-                    cellText += `\nTiết: ${displayCumulative}/${subj?.totalPeriods}`;
+                    
+                    // NEW: Room and Progress on same line separated by |
+                    cellText += `\nPhòng: ${item.roomId} | Tiết: ${displayCumulative}/${subj?.totalPeriods}`;
                     
                     rowData.push(cellText);
 

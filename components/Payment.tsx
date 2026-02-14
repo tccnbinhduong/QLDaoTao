@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import ExcelJS from 'exceljs'; // Import ExcelJS
 import saveAs from 'file-saver';
 import { Download, Trash2, CheckCircle, CreditCard, FileSpreadsheet } from 'lucide-react';
@@ -133,13 +133,13 @@ const Payment: React.FC = () => {
           const actualTotalPeriods = relevantSchedules.reduce((sum, s) => sum + s.periodCount, 0);
 
           const replacements: Record<string, string> = {
-              "{teacherTitle}": teacherObj?.title || 'Thầy/Cô', // NEW variable
+              "{teacherTitle}": teacherObj?.title || 'Thầy/Cô', 
               "{teacherName}": item.teacherName,
               "{teacherPhone}": teacherObj?.phone || '',
               "{teacherBank}": teacherObj?.bank || '',
               "{teacherAccount}": teacherObj?.accountNumber || '',
               "{subjectName}": item.subjectName,
-              "{className}": item.className,
+              "{className}": item.className, // Scalar replacement (Header)
               "{totalPeriods}": String(item.totalPeriods),
               "{actualTotalPeriods}": String(actualTotalPeriods),
               "{fromDate}": startDate,
@@ -151,28 +151,38 @@ const Payment: React.FC = () => {
           const workbook = new ExcelJS.Workbook();
           await workbook.xlsx.load(buffer);
           
-          // Assume data is in the first sheet
           const ws = workbook.worksheets[0];
           if (!ws) {
               alert("File mẫu không hợp lệ.");
               return;
           }
 
-          // 5. Find List Header and Scalar Replacements
+          // 5. Detect Scalar Replacements & List Structure (Multi-column support)
           let listRowIndex = -1;
-          const colMap: any = {};
+          // colMap structure: { 1: { date: col, periods: col }, 2: { date: col, periods: col } }
+          const colSets: Record<number, Record<string, number>> = {};
 
           ws.eachRow((row, rowNumber) => {
               row.eachCell((cell, colNumber) => {
                   let val = cell.value ? String(cell.value) : '';
-                  
-                  // Detect list placeholders
-                  if(val.includes('{date}')) { listRowIndex = rowNumber; colMap['date'] = colNumber; }
-                  if(val.includes('{periods}')) { listRowIndex = rowNumber; colMap['periods'] = colNumber; }
-                  if(val.includes('{type}')) { listRowIndex = rowNumber; colMap['type'] = colNumber; }
-                  if(val.includes('{note}')) { listRowIndex = rowNumber; colMap['note'] = colNumber; }
 
-                  // Replace Scalars (Single values)
+                  // Detect list placeholders with optional suffix (e.g., {date}, {date_2})
+                  // Regex: matches {date}, {date_1}, {date_2}, etc.
+                  const listVars = ['date', 'periods', 'type', 'note', 'className'];
+                  
+                  for (const v of listVars) {
+                      const regex = new RegExp(`{${v}(_([0-9]+))?}`);
+                      const match = val.match(regex);
+                      if (match) {
+                          listRowIndex = rowNumber;
+                          const suffix = match[2] ? parseInt(match[2]) : 1;
+                          
+                          if (!colSets[suffix]) colSets[suffix] = {};
+                          colSets[suffix][v] = colNumber;
+                      }
+                  }
+
+                  // Replace Scalars (Headers)
                   Object.keys(replacements).forEach(key => {
                       if(val.includes(key)) {
                           val = val.replace(key, replacements[key]);
@@ -182,50 +192,75 @@ const Payment: React.FC = () => {
               });
           });
 
-          // 6. Handle List Insertion
-          if (listRowIndex !== -1 && relevantSchedules.length > 0) {
-              // Helper to fill a row with schedule data
-              const fillRow = (row: any, schedule: any) => {
-                  if(colMap['date']) row.getCell(colMap['date']).value = format(parseLocal(schedule.date), 'dd/MM/yyyy');
-                  if(colMap['periods']) row.getCell(colMap['periods']).value = schedule.periodCount;
-                  if(colMap['type']) row.getCell(colMap['type']).value = schedule.type === 'exam' ? 'Thi' : 'Học';
-                  if(colMap['note']) row.getCell(colMap['note']).value = schedule.note || '';
+          // 6. Handle Multi-Column List Insertion
+          const setKeys = Object.keys(colSets).map(Number).sort((a,b) => a-b);
+          const numSets = setKeys.length;
+
+          // Helper to clean placeholders in a row (if no data)
+          const cleanRowPlaceholders = (row: any) => {
+             row.eachCell((cell: any) => {
+                  const val = String(cell.value);
+                  if (val.match(/{date(_\d+)?}/) || val.match(/{periods(_\d+)?}/) || val.match(/{className(_\d+)?}/)) {
+                      cell.value = null;
+                  }
+             });
+          };
+
+          if (listRowIndex !== -1 && relevantSchedules.length > 0 && numSets > 0) {
+              
+              // Determine how many items per set (Divide evenly)
+              const itemsPerSet = Math.ceil(relevantSchedules.length / numSets);
+              
+              // Helper to fill data into a specific row for a specific set
+              const fillDataToCell = (row: any, schedule: any, setIndex: number) => {
+                  const map = colSets[setIndex];
+                  if (!map) return;
                   
-                  // Clean up placeholders if they exist in the replaced row
-                  row.eachCell((cell: any) => {
-                      if (String(cell.value).includes('{') && String(cell.value).includes('}')) {
-                          // Try to clean up unreplaced tags in this specific row
-                          if(String(cell.value).includes('{date}')) cell.value = null;
-                          else if(String(cell.value).includes('{periods}')) cell.value = null;
-                          else if(String(cell.value).includes('{type}')) cell.value = null;
-                          else if(String(cell.value).includes('{note}')) cell.value = null;
-                      }
-                  });
+                  if(map['date']) row.getCell(map['date']).value = format(parseLocal(schedule.date), 'dd/MM/yyyy');
+                  if(map['periods']) row.getCell(map['periods']).value = schedule.periodCount;
+                  if(map['type']) row.getCell(map['type']).value = schedule.type === 'exam' ? 'Thi' : 'Học';
+                  if(map['note']) row.getCell(map['note']).value = schedule.note || '';
+                  if(map['className']) row.getCell(map['className']).value = item.className; // From item context
+
+                  // Clean up placeholders in this cell if they remain
+                  // Note: Logic here assumes the variable took up the whole cell or is ready to be overwritten
               };
 
-              // Strategy: 
-              // 1. Fill the FIRST item into the existing `listRowIndex` (preserving that row's style).
-              // 2. For remaining items, INSERT new rows below, inheriting style from the previous row ('i').
+              // Process:
+              // We need to iterate 'itemsPerSet' times.
+              // For each iteration i, we fill Set 1 with data[i], Set 2 with data[i + itemsPerSet], etc.
               
-              // Fill first item
-              fillRow(ws.getRow(listRowIndex), relevantSchedules[0]);
-
-              // Insert remaining items
-              for (let i = 1; i < relevantSchedules.length; i++) {
-                  const newRowIdx = listRowIndex + i;
-                  // 'i' argument tells ExcelJS to inherit style from the row *before* the insertion point.
-                  const newRow = ws.insertRow(newRowIdx, [], 'i');
-                  fillRow(newRow, relevantSchedules[i]);
+              // 1. Fill the FIRST row (existing in template)
+              for (let setIdx = 1; setIdx <= numSets; setIdx++) {
+                  const dataIndex = (setIdx - 1) * itemsPerSet + 0; // i=0
+                  if (dataIndex < relevantSchedules.length) {
+                      fillDataToCell(ws.getRow(listRowIndex), relevantSchedules[dataIndex], setIdx);
+                  }
               }
+
+              // 2. Insert and Fill remaining rows
+              for (let i = 1; i < itemsPerSet; i++) {
+                  const newRowIdx = listRowIndex + i;
+                  const newRow = ws.insertRow(newRowIdx, [], 'i'); // Inherit style
+                  
+                  for (let setIdx = 1; setIdx <= numSets; setIdx++) {
+                      const dataIndex = (setIdx - 1) * itemsPerSet + i;
+                      if (dataIndex < relevantSchedules.length) {
+                          fillDataToCell(newRow, relevantSchedules[dataIndex], setIdx);
+                      }
+                  }
+              }
+              
+              // Scan the used rows to ensure no placeholders remain (for short columns)
+               for (let i = 0; i < itemsPerSet; i++) {
+                   const rowToCheck = ws.getRow(listRowIndex + i);
+                   cleanRowPlaceholders(rowToCheck);
+               }
+
           } else if (listRowIndex !== -1) {
               // Found placeholder row but no data -> Clear placeholders
               const row = ws.getRow(listRowIndex);
-              row.eachCell((cell) => {
-                  const val = String(cell.value);
-                  if(val.includes('{date}') || val.includes('{periods}') || val.includes('{type}') || val.includes('{note}')) {
-                      cell.value = '';
-                  }
-              });
+              cleanRowPlaceholders(row);
           }
 
           // 7. Write Buffer and Save
