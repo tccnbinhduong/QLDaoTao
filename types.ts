@@ -98,7 +98,7 @@ export interface TeacherStat {
 export interface ExportTemplate {
   id: string;
   name: string;
-  type: 'payment_word'; // Can be extended
+  type: 'payment_excel' | 'student_list_excel' | 'invitation_word'; // Updated
   content: string; // Base64 Data URL
 }
 

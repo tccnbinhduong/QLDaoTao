@@ -1,13 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
-import * as XLSX from 'xlsx';
-import { Download, Trash2, CheckCircle, CreditCard, FileText } from 'lucide-react';
+import XLSX from 'xlsx';
+import { Download, Trash2, CheckCircle, CreditCard, FileSpreadsheet } from 'lucide-react';
 import { format } from 'date-fns';
-import { parseLocal, base64ToArrayBuffer } from '../utils';
-import PizZip from 'pizzip';
-import Docxtemplater from 'docxtemplater';
-import saveAs from 'file-saver';
+import { parseLocal } from '../utils';
 
 const Payment: React.FC = () => {
   const { teachers, schedules, subjects, classes, templates } = useApp();
@@ -113,61 +110,103 @@ const Payment: React.FC = () => {
     XLSX.writeFile(wb, `ThongKe_${item.subjectName}_${item.className}.xlsx`);
   };
 
-  const exportWordTemplate = (item: any) => {
+  const exportExcelTemplate = (item: any) => {
       // 1. Check if templates exist
-      const wordTemplates = templates.filter(t => t.type === 'payment_word');
-      if (wordTemplates.length === 0) {
-          alert('Chưa có mẫu Word nào. Vui lòng vào mục "Hệ thống" để tải lên mẫu .docx!');
+      const excelTemplates = templates.filter(t => t.type === 'payment_excel');
+      if (excelTemplates.length === 0) {
+          alert('Chưa có mẫu Excel nào. Vui lòng vào mục "Hệ thống" để tải lên mẫu .xlsx!');
           return;
       }
 
-      // 2. Select Template (Use first one by default for simplicity, or add a modal selector in future)
-      const template = wordTemplates[0];
+      // 2. Select Template (Use first one by default)
+      const template = excelTemplates[0];
 
       try {
           // 3. Prepare Data
           const relevantSchedules = getFilteredSchedules(item);
-          
-          // Dates
+          const firstSchedule = relevantSchedules[0];
+          const teacherObj = firstSchedule ? teachers.find(t => t.id === firstSchedule.teacherId) : null;
           const startDate = relevantSchedules.length > 0 ? format(parseLocal(relevantSchedules[0].date), 'dd/MM/yyyy') : '...';
           const endDate = relevantSchedules.length > 0 ? format(parseLocal(relevantSchedules[relevantSchedules.length - 1].date), 'dd/MM/yyyy') : '...';
-          
-          const docData = {
-              teacherName: item.teacherName,
-              subjectName: item.subjectName,
-              className: item.className,
-              totalPeriods: item.totalPeriods,
-              fromDate: startDate,
-              toDate: endDate,
-              schedules: relevantSchedules.map(s => ({
-                  date: format(parseLocal(s.date), 'dd/MM/yyyy'),
-                  periods: s.periodCount,
-                  type: s.type === 'exam' ? 'Thi' : 'Học',
-                  note: s.note || ''
-              }))
+          const actualTotalPeriods = relevantSchedules.reduce((sum, s) => sum + s.periodCount, 0);
+
+          const replacements: Record<string, string> = {
+              "{teacherName}": item.teacherName,
+              "{teacherPhone}": teacherObj?.phone || '',
+              "{teacherBank}": teacherObj?.bank || '',
+              "{teacherAccount}": teacherObj?.accountNumber || '',
+              "{subjectName}": item.subjectName,
+              "{className}": item.className,
+              "{totalPeriods}": String(item.totalPeriods),
+              "{actualTotalPeriods}": String(actualTotalPeriods),
+              "{fromDate}": startDate,
+              "{toDate}": endDate,
           };
 
-          // 4. Load PizZip & Docxtemplater via Import (Removed window usage)
-          const zip = new PizZip(base64ToArrayBuffer(template.content));
-          const doc = new Docxtemplater(zip, {
-              paragraphLoop: true,
-              linebreaks: true,
-          });
+          // 4. Read Template
+          const wb = XLSX.read(template.content, { type: 'base64' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          
+          if (!ws['!ref']) {
+              alert("File mẫu Excel không có dữ liệu!");
+              return;
+          }
 
-          // 5. Render
-          doc.render(docData);
+          const range = XLSX.utils.decode_range(ws['!ref']);
 
-          // 6. Output
-          const out = doc.getZip().generate({
-              type: "blob",
-              mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          });
+          // 5. Replace Scalars
+          for (let R = range.s.r; R <= range.e.r; ++R) {
+              for (let C = range.s.c; C <= range.e.c; ++C) {
+                   const cellRef = XLSX.utils.encode_cell({r: R, c: C});
+                   if(!ws[cellRef] || ws[cellRef].t !== 's') continue;
+                   let val = ws[cellRef].v;
+                   Object.keys(replacements).forEach(key => {
+                       if(val.includes(key)) val = val.replace(key, replacements[key]);
+                   });
+                   ws[cellRef].v = val;
+              }
+          }
 
-          saveAs(out, `PhieuThanhToan_${item.subjectName}.docx`);
+          // 6. Find List Header and Insert Data
+          // Look for row with {date} placeholder
+          let startRow = -1;
+          const colMap: any = {};
+          
+          for (let R = range.s.r; R <= range.e.r; ++R) {
+              for (let C = range.s.c; C <= range.e.c; ++C) {
+                  const cellRef = XLSX.utils.encode_cell({r: R, c: C});
+                  if(!ws[cellRef]) continue;
+                  const val = String(ws[cellRef].v);
+                  if(val.includes('{date}')) { startRow = R; colMap['date'] = C; ws[cellRef].v = "Ngày dạy"; }
+                  if(val.includes('{periods}')) { startRow = R; colMap['periods'] = C; ws[cellRef].v = "Số tiết"; }
+                  if(val.includes('{type}')) { startRow = R; colMap['type'] = C; ws[cellRef].v = "Nội dung"; }
+                  if(val.includes('{note}')) { startRow = R; colMap['note'] = C; ws[cellRef].v = "Ghi chú"; }
+              }
+              if(startRow !== -1) break;
+          }
+
+          if (startRow !== -1) {
+              // Write data rows immediately after header, overwriting existing rows below
+              relevantSchedules.forEach((s, idx) => {
+                   const row = startRow + 1 + idx;
+                   if (colMap['date'] !== undefined) XLSX.utils.sheet_add_aoa(ws, [[ format(parseLocal(s.date), 'dd/MM/yyyy') ]], {origin: {r: row, c: colMap['date']}});
+                   if (colMap['periods'] !== undefined) XLSX.utils.sheet_add_aoa(ws, [[ s.periodCount ]], {origin: {r: row, c: colMap['periods']}});
+                   if (colMap['type'] !== undefined) XLSX.utils.sheet_add_aoa(ws, [[ s.type === 'exam' ? 'Thi' : 'Học' ]], {origin: {r: row, c: colMap['type']}});
+                   if (colMap['note'] !== undefined) XLSX.utils.sheet_add_aoa(ws, [[ s.note || '' ]], {origin: {r: row, c: colMap['note']}});
+              });
+
+              // Extend range if needed
+              const newMaxRow = startRow + 1 + relevantSchedules.length;
+              if(newMaxRow > range.e.r) {
+                  ws['!ref'] = XLSX.utils.encode_range({s: range.s, e: {r: newMaxRow, c: range.e.c}});
+              }
+          }
+
+          XLSX.writeFile(wb, `PhieuThanhToan_${item.subjectName}.xlsx`);
 
       } catch (error) {
           console.error(error);
-          alert("Lỗi khi xuất file Word: " + error);
+          alert("Lỗi khi xuất file Excel: " + error);
       }
   };
 
@@ -209,11 +248,11 @@ const Payment: React.FC = () => {
                                             <Download size={14} className="mr-1" /> Excel
                                         </button>
                                         <button 
-                                            onClick={() => exportWordTemplate(item)}
-                                            className="bg-blue-100 hover:bg-blue-200 text-blue-800 px-3 py-1.5 rounded text-sm font-medium whitespace-nowrap transition-colors flex items-center"
-                                            title="Xuất phiếu thanh toán theo mẫu (Word)"
+                                            onClick={() => exportExcelTemplate(item)}
+                                            className="bg-orange-100 hover:bg-orange-200 text-orange-800 px-3 py-1.5 rounded text-sm font-medium whitespace-nowrap transition-colors flex items-center"
+                                            title="Xuất phiếu thanh toán theo mẫu (Excel)"
                                         >
-                                            <FileText size={14} className="mr-1" /> Word
+                                            <FileSpreadsheet size={14} className="mr-1" /> Excel (Mẫu)
                                         </button>
                                     </div>
                                 </td>

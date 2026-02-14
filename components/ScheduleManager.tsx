@@ -1,11 +1,14 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
-import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId } from '../utils';
+import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId, base64ToArrayBuffer } from '../utils';
 import { ScheduleItem, ScheduleStatus } from '../types';
 import { format, addDays, isSameDay, getWeek } from 'date-fns';
-import { vi } from 'date-fns/locale/vi';
-import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import { vi } from 'date-fns/locale';
+import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download, BookOpen, Mail } from 'lucide-react';
+import XLSX from 'xlsx';
+import PizZip from 'pizzip';
+import Docxtemplater from 'docxtemplater';
+import saveAs from 'file-saver';
 
 const DAYS_OF_WEEK = [
   { label: 'Thứ 2', val: 1 },
@@ -19,7 +22,7 @@ const DAYS_OF_WEEK = [
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 const ScheduleManager: React.FC = () => {
-  const { schedules, classes, teachers, subjects, addSchedule, updateSchedule, deleteSchedule } = useApp();
+  const { schedules, classes, teachers, subjects, templates, addSchedule, updateSchedule, deleteSchedule } = useApp();
   
   const [selectedClassId, setSelectedClassId] = useState<string>(classes[0]?.id || '');
   const [viewDate, setViewDate] = useState(new Date());
@@ -134,6 +137,32 @@ const ScheduleManager: React.FC = () => {
         }
     });
   }, [subjects, classes, selectedClassId, schedules, editItem, formType]);
+
+  // NEW: Calculate Active Subjects for the current class (displayed in the new section)
+  const activeSubjectsSummary = useMemo(() => {
+    const classSchedules = schedules.filter(s => s.classId === selectedClassId && s.status !== ScheduleStatus.OFF);
+    const uniqueSubjectIds = Array.from(new Set(classSchedules.map(s => s.subjectId)));
+
+    return uniqueSubjectIds.map(subId => {
+        const sub = subjects.find(s => s.id === subId);
+        // Find main teacher (the one who taught the most recently added schedule for this subject)
+        const subjectSchedules = classSchedules.filter(s => s.subjectId === subId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        const latestSchedule = subjectSchedules[0];
+        const teacher = teachers.find(t => t.id === latestSchedule?.teacherId);
+        const cls = classes.find(c => c.id === selectedClassId);
+
+        return {
+            id: subId,
+            classId: selectedClassId, // Needed for query
+            teacherId: teacher?.id, // Needed for query
+            subjectName: sub?.name || 'Unknown',
+            teacherName: teacher?.name || 'Chưa cập nhật',
+            totalPeriods: sub?.totalPeriods || 0,
+            className: cls?.name || ''
+        };
+    });
+  }, [schedules, subjects, teachers, classes, selectedClassId]);
+
 
   // Check if current form subject is shared
   const currentFormSubject = subjects.find(s => s.id === (editItem ? editItem.subjectId : formSubjectId));
@@ -536,6 +565,7 @@ const ScheduleManager: React.FC = () => {
   };
 
   const handleExportExcel = () => {
+    // ... (Existing Excel Export Logic)
     const wb = XLSX.utils.book_new();
     const data: any[] = [];
     const merges: any[] = [];
@@ -654,6 +684,100 @@ const ScheduleManager: React.FC = () => {
 
     XLSX.utils.book_append_sheet(wb, ws, "Lịch Học");
     XLSX.writeFile(wb, `Lich_Hoc_${classes.find(c => c.id === selectedClassId)?.name}_Tuan_${weekNumber}.xlsx`);
+  };
+
+  const handleExportInvitation = (item: any) => {
+      // 1. Check for template
+      const template = templates.find(t => t.type === 'invitation_word');
+      if (!template) {
+          alert("Vui lòng tải lên mẫu Thư mời giảng (.docx) trong phần 'Hệ thống' trước khi xuất file.");
+          return;
+      }
+
+      try {
+          // 2. Gather Data
+          const teacher = teachers.find(t => t.id === item.teacherId);
+          const currentClass = classes.find(c => c.id === item.classId);
+          const subject = subjects.find(s => s.id === item.id); // item.id is subjectId in activeSubjectsSummary
+
+          if (!teacher || !currentClass || !subject) {
+              alert("Thiếu thông tin giáo viên, lớp hoặc môn học.");
+              return;
+          }
+
+          // Get Schedules for this specific subject/class/teacher combo to determine dates and rooms
+          const relevantSchedules = schedules
+              .filter(s => s.subjectId === item.id && s.classId === item.classId && s.status !== ScheduleStatus.OFF)
+              .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+          const startDate = relevantSchedules.length > 0 ? format(parseLocal(relevantSchedules[0].date), 'dd/MM/yyyy') : '...';
+          const endDate = relevantSchedules.length > 0 ? format(parseLocal(relevantSchedules[relevantSchedules.length - 1].date), 'dd/MM/yyyy') : '...';
+          const datesStr = `Từ ngày ${startDate} đến ngày ${endDate}`;
+
+          // Determine Sessions (Sáng/Chiều)
+          const sessions = new Set<string>();
+          relevantSchedules.forEach(s => {
+              if (s.startPeriod <= 5) sessions.add("Sáng (1-5)");
+              else sessions.add("Chiều (6-10)");
+          });
+          const sessionStr = Array.from(sessions).join(', ');
+
+          // Determine Rooms
+          const rooms = Array.from(new Set(relevantSchedules.map(s => s.roomId))).join(', ');
+
+          // Determine Location & Map Link based on Class Name
+          const lastChar = currentClass.name.trim().slice(-1);
+          let location = "";
+          let mapLink = "";
+
+          if (lastChar === '1') {
+             location = "Cơ sở 1 - số 79, ĐT743, phường Bình Hoà, TP.HCM";
+             mapLink = "https://maps.app.goo.gl/Y9ubh6zCUp6USaun8";
+          } else if (lastChar === '2') {
+             location = "Cơ sở 2 - số 470, tổ 3, Ba Đình, phường Tân Đông Hiệp, TP.HCM";
+             mapLink = "https://maps.app.goo.gl/8Vwf8gMnPuMGpNgA8";
+          } else {
+             location = "Cơ sở chính"; // Default fallback
+             mapLink = "";
+          }
+
+          // Format Currency
+          const rateStr = new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(teacher.ratePerPeriod || 0);
+
+          // 3. Prepare Data Object
+          const data = {
+              teacherName: teacher.name,
+              subjectName: subject.name,
+              className: currentClass.name,
+              totalPeriods: subject.totalPeriods,
+              dates: datesStr,
+              sessions: sessionStr,
+              rate: rateStr,
+              room: rooms,
+              location: location,
+              mapLink: mapLink
+          };
+
+          // 4. Generate Doc
+          const zip = new PizZip(base64ToArrayBuffer(template.content));
+          const doc = new Docxtemplater(zip, {
+              paragraphLoop: true,
+              linebreaks: true,
+          });
+
+          doc.render(data);
+
+          const out = doc.getZip().generate({
+              type: "blob",
+              mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          });
+
+          saveAs(out, `Thu_Moi_Giang_${teacher.name}_${subject.name}.docx`);
+
+      } catch (error) {
+          console.error(error);
+          alert("Lỗi khi tạo file thư mời: " + error);
+      }
   };
 
   return (
@@ -811,6 +935,52 @@ const ScheduleManager: React.FC = () => {
              })}
           </tbody>
         </table>
+      </div>
+
+      {/* NEW: Active Subjects Summary & Invitation */}
+      <div className="bg-white rounded-xl shadow border border-gray-200 p-6">
+         <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
+            <BookOpen className="mr-2 text-blue-600" /> Môn học đang triển khai
+         </h2>
+         <div className="overflow-x-auto">
+             <table className="w-full text-left text-sm">
+                 <thead className="bg-gray-50 border-b">
+                     <tr>
+                         <th className="p-3 w-12 text-center">STT</th>
+                         <th className="p-3">Tên môn học</th>
+                         <th className="p-3">Tên giáo viên</th>
+                         <th className="p-3">Số tiết</th>
+                         <th className="p-3">Lớp</th>
+                         <th className="p-3 text-center">Thư mời giảng</th>
+                     </tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-100">
+                     {activeSubjectsSummary.length === 0 ? (
+                         <tr>
+                             <td colSpan={6} className="p-6 text-center text-gray-400 italic">Chưa có môn học nào được xếp lịch.</td>
+                         </tr>
+                     ) : (
+                         activeSubjectsSummary.map((item, index) => (
+                             <tr key={item.id} className="hover:bg-gray-50">
+                                 <td className="p-3 text-center text-gray-500">{index + 1}</td>
+                                 <td className="p-3 font-medium text-gray-800">{item.subjectName}</td>
+                                 <td className="p-3 text-gray-600">{item.teacherName}</td>
+                                 <td className="p-3 text-gray-600">{item.totalPeriods}</td>
+                                 <td className="p-3 text-gray-600">{item.className}</td>
+                                 <td className="p-3 text-center">
+                                     <button 
+                                        onClick={() => handleExportInvitation(item)}
+                                        className="inline-flex items-center px-3 py-1.5 bg-white border border-blue-200 text-blue-600 rounded hover:bg-blue-50 transition-colors shadow-sm text-xs font-medium"
+                                     >
+                                         <Mail size={14} className="mr-1.5" /> Xuất thư mời
+                                     </button>
+                                 </td>
+                             </tr>
+                         ))
+                     )}
+                 </tbody>
+             </table>
+         </div>
       </div>
 
       {/* Context Menu */}

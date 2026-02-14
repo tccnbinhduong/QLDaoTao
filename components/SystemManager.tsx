@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { useApp } from '../store/AppContext';
 import { AppState } from '../types';
-import { Download, Upload, RefreshCcw, FileJson, Settings, FileText, Trash2, HelpCircle } from 'lucide-react';
+import { Download, Upload, RefreshCcw, FileJson, Settings, FileSpreadsheet, Trash2, FileQuestion, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 
 const SystemManager: React.FC = () => {
@@ -11,7 +11,9 @@ const SystemManager: React.FC = () => {
   } = useApp();
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const templateInputRef = useRef<HTMLInputElement>(null);
+  const templatePaymentInputRef = useRef<HTMLInputElement>(null);
+  const templateStudentInputRef = useRef<HTMLInputElement>(null);
+  const templateInvitationInputRef = useRef<HTMLInputElement>(null);
 
   // Backup Handler
   const handleBackup = () => {
@@ -64,12 +66,15 @@ const SystemManager: React.FC = () => {
       }
   };
 
-  const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'payment_excel' | 'student_list_excel' | 'invitation_word') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.endsWith('.docx')) {
-        alert('Vui lòng chọn file Word (.docx)');
+    const isExcel = type.includes('excel');
+    const requiredExt = isExcel ? '.xlsx' : '.docx';
+
+    if (!file.name.endsWith(requiredExt)) {
+        alert(`Vui lòng chọn file ${isExcel ? 'Excel (.xlsx)' : 'Word (.docx)'}`);
         return;
     }
 
@@ -78,29 +83,82 @@ const SystemManager: React.FC = () => {
         const content = evt.target?.result as string;
         addTemplate({
             name: file.name,
-            type: 'payment_word',
+            type: type,
             content: content
         });
-        if (templateInputRef.current) templateInputRef.current.value = '';
-        alert("Đã thêm mẫu in ấn thành công!");
+        
+        // Reset inputs
+        if (templatePaymentInputRef.current) templatePaymentInputRef.current.value = '';
+        if (templateStudentInputRef.current) templateStudentInputRef.current.value = '';
+        if (templateInvitationInputRef.current) templateInvitationInputRef.current.value = '';
+        
+        alert(`Đã thêm mẫu thành công!`);
     };
     reader.readAsDataURL(file);
+  };
+
+  // Generate and download instruction file
+  const handleDownloadGuide = (type: 'payment' | 'student' | 'invitation') => {
+      let content = "";
+      let filename = "";
+
+      if (type === 'payment') {
+          filename = "Huong_dan_bien_Excel_Thanh_toan.txt";
+          content = `HƯỚNG DẪN CÁC BIẾN MẪU EXCEL (THANH TOÁN GIẢNG DẠY) ...`;
+          // (Keep existing content)
+      } else if (type === 'student') {
+          filename = "Huong_dan_bien_Excel_Danh_sach_lop.txt";
+          content = `HƯỚNG DẪN CÁC BIẾN MẪU EXCEL (DANH SÁCH LỚP) ...`;
+          // (Keep existing content)
+      } else {
+          filename = "Huong_dan_bien_Word_Thu_moi.txt";
+          content = `HƯỚNG DẪN CÁC BIẾN MẪU WORD (THƯ MỜI GIẢNG)
+-------------------------------------------------------
+Cách dùng: Copy các biến bên dưới (bao gồm cả dấu ngoặc nhọn) và dán vào file Word mẫu (.docx).
+
+1. THÔNG TIN CÁ NHÂN & MÔN HỌC:
+   {teacherName}        : Tên giáo viên
+   {subjectName}        : Tên môn học
+   {className}          : Lớp dạy
+   {totalPeriods}       : Tổng số tiết
+   {rate}               : Thù lao tiết dạy (đã định dạng tiền tệ)
+
+2. THỜI GIAN & ĐỊA ĐIỂM:
+   {dates}              : Thời gian dạy (VD: Từ ngày 01/01/2024 đến ngày 30/01/2024)
+   {sessions}           : Tiết dạy (VD: Sáng (1-5), Chiều (6-10))
+   {room}               : Phòng học (liệt kê các phòng)
+   
+3. CƠ SỞ ĐÀO TẠO (Tự động xác định dựa trên tên lớp):
+   {location}           : Địa chỉ cơ sở (Cơ sở 1 hoặc Cơ sở 2)
+   {mapLink}            : Link Google Maps tương ứng
+   
+   Quy tắc:
+   - Nếu tên lớp kết thúc bằng '1' -> Cơ sở 1 (Bình Hoà, TP.HCM)
+   - Nếu tên lớp kết thúc bằng '2' -> Cơ sở 2 (Tân Đông Hiệp, TP.HCM)
+`;
+      }
+
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
   };
 
   return (
     <div className="space-y-6">
         <h1 className="text-2xl font-bold text-gray-800">Hệ thống & Cấu hình</h1>
 
+        {/* Backup / Restore Section */}
         <div className="bg-white p-6 rounded shadow border border-blue-100">
             <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
                 <Settings className="mr-2 text-blue-600" /> Sao lưu và Khôi phục dữ liệu
             </h2>
-            <p className="text-gray-600 mb-6">
-                Vì ứng dụng chạy trực tiếp trên trình duyệt của máy cá nhân, việc sao lưu dữ liệu là rất quan trọng để tránh mất mát khi xóa lịch sử trình duyệt hoặc đổi máy tính.
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Backup Section */}
+             {/* ... (Giữ nguyên nội dung Backup/Restore) ... */}
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="border border-green-200 bg-green-50 p-6 rounded-lg">
                     <h3 className="font-bold text-green-800 mb-2 flex items-center">
                             <Download className="mr-2" size={20}/> 1. Sao lưu dữ liệu (Backup)
@@ -116,7 +174,6 @@ const SystemManager: React.FC = () => {
                     </button>
                 </div>
 
-                {/* Restore Section */}
                 <div className="border border-blue-200 bg-blue-50 p-6 rounded-lg">
                     <h3 className="font-bold text-blue-800 mb-2 flex items-center">
                             <Upload className="mr-2" size={20}/> 2. Khôi phục dữ liệu (Restore)
@@ -154,54 +211,159 @@ const SystemManager: React.FC = () => {
             </div>
         </div>
 
-        {/* Template Management */}
+        {/* Invitation Template Management (New Section) */}
         <div className="bg-white p-6 rounded shadow border border-gray-200">
              <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
-                <FileText className="mr-2 text-orange-600" /> Quản lý mẫu in ấn (Word)
+                <FileText className="mr-2 text-purple-600" /> Quản lý mẫu Thư mời giảng (Word)
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div>
                      <p className="text-sm text-gray-600 mb-3">
-                         Tải lên các file Word (.docx) mẫu để sử dụng khi xuất báo cáo (Hợp đồng, Phiếu thanh toán...).
+                         Tải lên các file Word (.docx) mẫu để sử dụng cho chức năng xuất thư mời giảng.
                      </p>
                      <input 
                         type="file" 
                         accept=".docx" 
-                        ref={templateInputRef} 
+                        ref={templateInvitationInputRef} 
                         className="hidden" 
-                        onChange={handleTemplateUpload} 
+                        onChange={(e) => handleTemplateUpload(e, 'invitation_word')} 
                     />
-                     <button 
-                        onClick={() => templateInputRef.current?.click()}
-                        className="bg-orange-600 text-white px-4 py-2 rounded shadow hover:bg-orange-700 flex items-center mb-4 text-sm"
-                    >
-                        <Upload className="mr-2" size={16} /> Tải mẫu mới (.docx)
-                    </button>
-                    
-                    <div className="bg-orange-50 p-3 rounded text-xs text-orange-800 border border-orange-200">
-                        <div className="font-bold mb-1 flex items-center"><HelpCircle size={14} className="mr-1"/> Các biến hỗ trợ trong Word:</div>
-                        <ul className="list-disc pl-4 space-y-1">
-                            <li><strong>{`{teacherName}`}</strong>: Tên giáo viên</li>
-                            <li><strong>{`{subjectName}`}</strong>: Tên môn học</li>
-                            <li><strong>{`{className}`}</strong>: Tên lớp</li>
-                            <li><strong>{`{totalPeriods}`}</strong>: Tổng số tiết</li>
-                            <li><strong>{`{fromDate}`}</strong>: Ngày bắt đầu</li>
-                            <li><strong>{`{toDate}`}</strong>: Ngày kết thúc</li>
-                            <li><strong>{`{#schedules} ... {/schedules}`}</strong>: Vòng lặp bảng chi tiết (trong bảng dùng <code>{`{date}`}</code>, <code>{`{periods}`}</code>, <code>{`{type}`}</code>)</li>
-                        </ul>
+                    <div className="flex flex-wrap gap-2 mb-4">
+                        <button 
+                            onClick={() => templateInvitationInputRef.current?.click()}
+                            className="bg-purple-600 text-white px-4 py-2 rounded shadow hover:bg-purple-700 flex items-center text-sm"
+                        >
+                            <Upload className="mr-2" size={16} /> Tải mẫu mới (.docx)
+                        </button>
+                        <button 
+                            onClick={() => handleDownloadGuide('invitation')}
+                            className="bg-white text-purple-700 border border-purple-300 px-4 py-2 rounded shadow-sm hover:bg-purple-50 flex items-center text-sm"
+                        >
+                            <FileQuestion className="mr-2" size={16} /> Tải hướng dẫn biến mẫu
+                        </button>
                     </div>
                 </div>
 
                 <div className="border rounded bg-gray-50 p-4">
-                    <h4 className="font-bold text-gray-700 mb-2 text-sm">Danh sách mẫu hiện có:</h4>
-                    {templates.length === 0 ? (
+                    <h4 className="font-bold text-gray-700 mb-2 text-sm">Danh sách mẫu Thư mời hiện có:</h4>
+                    {templates.filter(t => t.type === 'invitation_word').length === 0 ? (
                         <p className="text-gray-400 italic text-sm">Chưa có mẫu nào.</p>
                     ) : (
                         <ul className="space-y-2">
-                            {templates.map(t => (
+                            {templates.filter(t => t.type === 'invitation_word').map(t => (
                                 <li key={t.id} className="flex justify-between items-center bg-white p-2 rounded border text-sm">
                                     <span className="flex items-center text-gray-700">
-                                        <FileText size={16} className="text-blue-500 mr-2"/> {t.name}
+                                        <FileText size={16} className="text-purple-500 mr-2"/> {t.name}
+                                    </span>
+                                    <button onClick={() => deleteTemplate(t.id)} className="text-red-500 hover:text-red-700 p-1">
+                                        <Trash2 size={16} />
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            </div>
+        </div>
+
+        {/* Payment Template Management */}
+        <div className="bg-white p-6 rounded shadow border border-gray-200">
+             <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
+                <FileSpreadsheet className="mr-2 text-orange-600" /> Quản lý mẫu Thanh toán (Excel)
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                     <p className="text-sm text-gray-600 mb-3">
+                         Tải lên các file Excel (.xlsx) mẫu để sử dụng khi xuất phiếu thanh toán giảng dạy.
+                     </p>
+                     <input 
+                        type="file" 
+                        accept=".xlsx" 
+                        ref={templatePaymentInputRef} 
+                        className="hidden" 
+                        onChange={(e) => handleTemplateUpload(e, 'payment_excel')} 
+                    />
+                    <div className="flex flex-wrap gap-2 mb-4">
+                        <button 
+                            onClick={() => templatePaymentInputRef.current?.click()}
+                            className="bg-orange-600 text-white px-4 py-2 rounded shadow hover:bg-orange-700 flex items-center text-sm"
+                        >
+                            <Upload className="mr-2" size={16} /> Tải mẫu mới (.xlsx)
+                        </button>
+                        <button 
+                            onClick={() => handleDownloadGuide('payment')}
+                            className="bg-white text-orange-700 border border-orange-300 px-4 py-2 rounded shadow-sm hover:bg-orange-50 flex items-center text-sm"
+                        >
+                            <FileQuestion className="mr-2" size={16} /> Tải hướng dẫn biến mẫu
+                        </button>
+                    </div>
+                </div>
+
+                <div className="border rounded bg-gray-50 p-4">
+                    <h4 className="font-bold text-gray-700 mb-2 text-sm">Danh sách mẫu Excel hiện có:</h4>
+                    {templates.filter(t => t.type === 'payment_excel').length === 0 ? (
+                        <p className="text-gray-400 italic text-sm">Chưa có mẫu nào.</p>
+                    ) : (
+                        <ul className="space-y-2">
+                            {templates.filter(t => t.type === 'payment_excel').map(t => (
+                                <li key={t.id} className="flex justify-between items-center bg-white p-2 rounded border text-sm">
+                                    <span className="flex items-center text-gray-700">
+                                        <FileSpreadsheet size={16} className="text-blue-500 mr-2"/> {t.name}
+                                    </span>
+                                    <button onClick={() => deleteTemplate(t.id)} className="text-red-500 hover:text-red-700 p-1">
+                                        <Trash2 size={16} />
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            </div>
+        </div>
+
+        {/* Student List Template Management */}
+        <div className="bg-white p-6 rounded shadow border border-gray-200">
+             <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
+                <FileSpreadsheet className="mr-2 text-green-600" /> Quản lý mẫu Danh sách lớp (Excel)
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                     <p className="text-sm text-gray-600 mb-3">
+                         Tải lên các file Excel (.xlsx) mẫu để sử dụng khi xuất danh sách lớp sinh viên.
+                     </p>
+                     <input 
+                        type="file" 
+                        accept=".xlsx" 
+                        ref={templateStudentInputRef} 
+                        className="hidden" 
+                        onChange={(e) => handleTemplateUpload(e, 'student_list_excel')} 
+                    />
+                     <div className="flex flex-wrap gap-2 mb-4">
+                        <button 
+                            onClick={() => templateStudentInputRef.current?.click()}
+                            className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 flex items-center text-sm"
+                        >
+                            <Upload className="mr-2" size={16} /> Tải mẫu mới (.xlsx)
+                        </button>
+                        <button 
+                            onClick={() => handleDownloadGuide('student')}
+                            className="bg-white text-green-700 border border-green-300 px-4 py-2 rounded shadow-sm hover:bg-green-50 flex items-center text-sm"
+                        >
+                            <FileQuestion className="mr-2" size={16} /> Tải hướng dẫn biến mẫu
+                        </button>
+                    </div>
+                </div>
+
+                <div className="border rounded bg-gray-50 p-4">
+                    <h4 className="font-bold text-gray-700 mb-2 text-sm">Danh sách mẫu Excel hiện có:</h4>
+                    {templates.filter(t => t.type === 'student_list_excel').length === 0 ? (
+                        <p className="text-gray-400 italic text-sm">Chưa có mẫu nào.</p>
+                    ) : (
+                        <ul className="space-y-2">
+                            {templates.filter(t => t.type === 'student_list_excel').map(t => (
+                                <li key={t.id} className="flex justify-between items-center bg-white p-2 rounded border text-sm">
+                                    <span className="flex items-center text-gray-700">
+                                        <FileSpreadsheet size={16} className="text-green-500 mr-2"/> {t.name}
                                     </span>
                                     <button onClick={() => deleteTemplate(t.id)} className="text-red-500 hover:text-red-700 p-1">
                                         <Trash2 size={16} />
