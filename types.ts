@@ -12,6 +12,7 @@ export enum ScheduleStatus {
 
 export interface Teacher {
   id: string;
+  title?: string; // NEW: Thầy/Cô
   name: string;
   phone: string;
   accountNumber: string;
@@ -53,6 +54,7 @@ export interface Student {
   fatherName: string;
   motherName: string;
   phone: string;
+  status: 'studying' | 'reserved' | 'dropped'; // NEW: Trạng thái học tập
 }
 
 export interface ScheduleItem {

@@ -1,48 +1,111 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
-import { Filter, CheckCircle, Clock, BookOpen, User, Calendar } from 'lucide-react';
+import { Filter, BookOpen, User, Edit2, Save, X, Calendar, Clock } from 'lucide-react';
 import { parseLocal } from '../utils';
 import { isSameDay, startOfDay, format } from 'date-fns';
 
+// Interface for local metadata storage
+interface SubjectMetadata {
+    statusOverride?: 'upcoming' | 'completed' | 'in-progress' | 'auto';
+    customStartDate?: string; // YYYY-MM-DD
+    customEndDate?: string;   // YYYY-MM-DD
+    customExamDate?: string;  // YYYY-MM-DD
+}
+
 const TeachingProgress: React.FC = () => {
-  const { classes, subjects, schedules } = useApp();
+  const { classes, subjects, schedules, teachers, updateSubject } = useApp();
   const [selectedClassId, setSelectedClassId] = useState<string>(classes[0]?.id || '');
 
-  // NEW: State for manual completion (Persisted in localStorage)
-  const [manualCompleted, setManualCompleted] = useState<string[]>(() => {
+  // NEW: State for Subject Metadata (Persisted in localStorage) replaces simple manualCompleted
+  const [progressMetadata, setProgressMetadata] = useState<Record<string, SubjectMetadata>>(() => {
     try {
-      const saved = localStorage.getItem('manual_completed_subjects');
-      return saved ? JSON.parse(saved) : [];
+      const saved = localStorage.getItem('subject_progress_metadata');
+      return saved ? JSON.parse(saved) : {};
     } catch {
-      return [];
+      return {};
     }
   });
 
-  const toggleManualComplete = (e: React.MouseEvent, subjectId: string) => {
-    e.stopPropagation(); // Prevent bubbling
-    e.preventDefault(); // Prevent default behavior
-    
-    if (!selectedClassId) return;
-    
-    const key = `${subjectId}-${selectedClassId}`;
-    let newList;
-    
-    if (manualCompleted.includes(key)) {
-        // Toggle OFF
-        newList = manualCompleted.filter(k => k !== key);
-    } else {
-        // Toggle ON (Removed confirm dialog for better UX)
-        newList = [...manualCompleted, key];
-    }
-    
-    setManualCompleted(newList);
-    localStorage.setItem('manual_completed_subjects', JSON.stringify(newList));
+  // Modal State
+  const [editingItem, setEditingItem] = useState<{
+      subjectId: string;
+      subjectName: string;
+      status: string;
+      startDate: string;
+      endDate: string;
+      examDate: string;
+      selectedTeacherId: string; // NEW
+  } | null>(null);
+
+  const saveMetadata = (key: string, data: SubjectMetadata) => {
+      const newMeta = { ...progressMetadata, [key]: data };
+      setProgressMetadata(newMeta);
+      localStorage.setItem('subject_progress_metadata', JSON.stringify(newMeta));
+  };
+
+  const handleEditClick = (subject: any) => {
+      // Convert display dates back to input format (YYYY-MM-DD) if possible, or keep empty
+      const toInputDate = (dateStr: string) => {
+          if (!dateStr || dateStr === '--/--/----' || dateStr === 'Chưa xếp') return '';
+          const parts = dateStr.split('/');
+          if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
+          return '';
+      };
+
+      // Find the teacher ID based on name to pre-select
+      const matchedTeacher = teachers.find(t => t.name === subject.teacher1);
+
+      setEditingItem({
+          subjectId: subject.id,
+          subjectName: subject.name,
+          status: subject.status,
+          startDate: toInputDate(subject.startDate),
+          endDate: toInputDate(subject.endDate),
+          examDate: toInputDate(subject.examDate),
+          selectedTeacherId: matchedTeacher ? matchedTeacher.id : ''
+      });
+  };
+
+  const handleSaveModal = () => {
+      if (!editingItem || !selectedClassId) return;
+
+      // VALIDATION: Check End Date > Start Date if Completed
+      if (editingItem.status === 'completed' && editingItem.startDate && editingItem.endDate) {
+          if (new Date(editingItem.startDate) > new Date(editingItem.endDate)) {
+              alert("Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.");
+              return;
+          }
+      }
+
+      const key = `${editingItem.subjectId}-${selectedClassId}`;
+      
+      let statusOverride: SubjectMetadata['statusOverride'] = 'auto';
+      if (editingItem.status === 'completed') statusOverride = 'completed';
+      else if (editingItem.status === 'upcoming') statusOverride = 'upcoming';
+      else if (editingItem.status === 'in-progress') statusOverride = 'in-progress';
+
+      const metadata: SubjectMetadata = {
+          statusOverride: statusOverride,
+          customStartDate: editingItem.startDate || undefined,
+          customEndDate: editingItem.endDate || undefined,
+          customExamDate: editingItem.examDate || undefined
+      };
+
+      // 1. Save Metadata
+      saveMetadata(key, metadata);
+
+      // 2. Save Teacher Assignment (Update Subject)
+      const selectedTeacher = teachers.find(t => t.id === editingItem.selectedTeacherId);
+      updateSubject(editingItem.subjectId, {
+          teacher1: selectedTeacher ? selectedTeacher.name : '',
+          phone1: selectedTeacher ? selectedTeacher.phone : ''
+      });
+
+      setEditingItem(null);
   };
 
   const currentClass = classes.find(c => c.id === selectedClassId);
-  
-  // Define today for comparison
   const today = startOfDay(new Date());
 
   // Calculate progress for all subjects in the selected class
@@ -54,6 +117,9 @@ const TeachingProgress: React.FC = () => {
 
     // 2. Calculate stats per subject
     return classSubjects.map(sub => {
+      const uniqueKey = `${sub.id}-${selectedClassId}`;
+      const metadata = progressMetadata[uniqueKey] || {};
+
       const relevantSchedules = schedules.filter(sch => 
         sch.subjectId === sub.id && 
         sch.classId === selectedClassId && 
@@ -67,11 +133,33 @@ const TeachingProgress: React.FC = () => {
       
       const examSchedule = relevantSchedules.find(s => s.type === 'exam');
 
-      // Calculate Dates
-      const startDate = classSchedules.length > 0 ? format(parseLocal(classSchedules[0].date), 'dd/MM/yyyy') : '--/--/----';
-      const endDate = classSchedules.length > 0 ? format(parseLocal(classSchedules[classSchedules.length - 1].date), 'dd/MM/yyyy') : '--/--/----';
-      const examDate = examSchedule ? format(parseLocal(examSchedule.date), 'dd/MM/yyyy') : 'Chưa xếp';
+      // --- DATE CALCULATION (Prioritize Metadata) ---
+      let startDate = '--/--/----';
+      let endDate = '--/--/----';
+      let examDate = 'Chưa xếp';
 
+      // Start Date
+      if (metadata.customStartDate) {
+          startDate = format(parseLocal(metadata.customStartDate), 'dd/MM/yyyy');
+      } else if (classSchedules.length > 0) {
+          startDate = format(parseLocal(classSchedules[0].date), 'dd/MM/yyyy');
+      }
+
+      // End Date
+      if (metadata.customEndDate) {
+          endDate = format(parseLocal(metadata.customEndDate), 'dd/MM/yyyy');
+      } else if (classSchedules.length > 0) {
+          endDate = format(parseLocal(classSchedules[classSchedules.length - 1].date), 'dd/MM/yyyy');
+      }
+
+      // Exam Date
+      if (metadata.customExamDate) {
+           examDate = format(parseLocal(metadata.customExamDate), 'dd/MM/yyyy');
+      } else if (examSchedule) {
+           examDate = format(parseLocal(examSchedule.date), 'dd/MM/yyyy');
+      }
+
+      // --- PERCENTAGE CALCULATION ---
       // Calculate realized periods: Only count periods that have passed or are happening today
       const realizedPeriods = relevantSchedules.reduce((acc, curr) => {
           const sDate = parseLocal(curr.date);
@@ -82,47 +170,40 @@ const TeachingProgress: React.FC = () => {
       const totalPeriods = sub.totalPeriods;
       const percentage = Math.min(100, Math.round((realizedPeriods / totalPeriods) * 100));
 
-      // Determine Status based on Dates
+      // --- STATUS CALCULATION ---
+      // 1. Check Auto Logic
       const hasScheduleToday = relevantSchedules.some(s => isSameDay(parseLocal(s.date), today));
       const hasSchedulePast = relevantSchedules.some(s => parseLocal(s.date) < today);
-      
-      // NEW: Check manual completion
-      const uniqueKey = `${sub.id}-${selectedClassId}`;
-      const isManuallyCompleted = manualCompleted.includes(uniqueKey);
       const isAutoCompleted = realizedPeriods >= totalPeriods;
 
       let status: 'upcoming' | 'in-progress' | 'completed' = 'upcoming';
 
-      // Priority 1: Completed (Auto or Manual)
-      if (isAutoCompleted || isManuallyCompleted) {
-        status = 'completed';
-      } 
-      // Priority 2: In Progress
-      else if (hasScheduleToday || hasSchedulePast) {
-        status = 'in-progress';
-      } 
-      // Priority 3: Upcoming
-      else {
-        status = 'upcoming';
+      // 2. Apply Override if exists
+      if (metadata.statusOverride && metadata.statusOverride !== 'auto') {
+          status = metadata.statusOverride;
+      } else {
+          // Auto Logic
+          if (isAutoCompleted) status = 'completed';
+          else if (hasScheduleToday || hasSchedulePast) status = 'in-progress';
+          else status = 'upcoming';
       }
 
       return {
         ...sub,
         learnedPeriods: realizedPeriods,
-        percentage, // Keep actual percentage even if manually completed for accuracy
+        percentage, 
         status,
-        isAutoCompleted,
-        isManuallyCompleted,
         startDate,
         endDate,
-        examDate
+        examDate,
+        isCustomized: !!metadata.statusOverride || !!metadata.customStartDate
       };
     }).sort((a, b) => {
         // Sort order: In Progress -> Upcoming -> Completed
         const order = { 'in-progress': 1, 'upcoming': 2, 'completed': 3 };
         return order[a.status] - order[b.status];
     });
-  }, [subjects, schedules, classes, selectedClassId, currentClass, today, manualCompleted]);
+  }, [subjects, schedules, classes, selectedClassId, currentClass, today, progressMetadata]);
 
   // Summary Counts
   const summary = {
@@ -142,7 +223,7 @@ const TeachingProgress: React.FC = () => {
 
   const getStatusLabel = (status: string) => {
     switch (status) {
-      case 'completed': return 'Đã học';
+      case 'completed': return 'Đã hoàn thành';
       case 'in-progress': return 'Đang học';
       default: return 'Sắp học';
     }
@@ -218,7 +299,10 @@ const TeachingProgress: React.FC = () => {
                              <BookOpen size={20} />
                         </div>
                         <div>
-                             <h4 className="font-bold text-gray-800">{subject.name}</h4>
+                             <h4 className="font-bold text-gray-800 flex items-center">
+                                 {subject.name}
+                                 {subject.isCustomized && <span className="ml-2 w-2 h-2 rounded-full bg-orange-400" title="Đã chỉnh sửa thủ công"></span>}
+                             </h4>
                              <div className="flex items-center text-sm text-gray-500 mt-1">
                                 <User size={14} className="mr-1" />
                                 {subject.teacher1 || <span className="italic text-gray-400">Chưa phân công</span>}
@@ -226,7 +310,7 @@ const TeachingProgress: React.FC = () => {
                         </div>
                      </div>
 
-                     {/* Column 2: Dates (3 cols) - NEW */}
+                     {/* Column 2: Dates (3 cols) */}
                      <div className="md:col-span-3 text-xs space-y-1.5 text-gray-600 pl-11 md:pl-0">
                          <div className="flex items-center gap-2">
                              <span className="w-16 font-semibold text-gray-500">Bắt đầu:</span>
@@ -260,27 +344,20 @@ const TeachingProgress: React.FC = () => {
                         </div>
                      </div>
 
-                     {/* Column 4: Status Badge & Manual Toggle (2 cols) */}
+                     {/* Column 4: Status Badge & Edit Button (2 cols) */}
                      <div className="md:col-span-2 w-full flex flex-row md:flex-col lg:flex-row justify-between md:justify-center items-center gap-3">
                          <span className={`px-2 py-1 rounded text-xs font-bold border whitespace-nowrap flex items-center gap-1 ${getStatusColor(subject.status)}`}>
                             {getStatusLabel(subject.status)}
                          </span>
                          
-                         {/* Manual Toggle Button */}
-                         {!subject.isAutoCompleted && (
-                            <button
-                                type="button"
-                                onClick={(e) => toggleManualComplete(e, subject.id)}
-                                className={`px-2 py-1 rounded text-xs font-semibold transition-colors shadow-sm whitespace-nowrap cursor-pointer ${
-                                    subject.isManuallyCompleted 
-                                    ? "bg-white text-red-500 border border-red-200 hover:bg-red-50" 
-                                    : "bg-blue-600 text-white border border-blue-600 hover:bg-blue-700"
-                                }`}
-                                title={subject.isManuallyCompleted ? "Hủy xác nhận hoàn thành" : "Xác nhận môn học đã hoàn thành"}
-                            >
-                                {subject.isManuallyCompleted ? "Hủy" : "Đã học"}
-                            </button>
-                         )}
+                         <button
+                            type="button"
+                            onClick={() => handleEditClick(subject)}
+                            className="px-2 py-1 bg-white text-gray-600 border border-gray-300 rounded hover:bg-gray-100 hover:text-blue-600 transition-colors shadow-sm text-xs font-medium flex items-center"
+                            title="Điều chỉnh lịch trình và trạng thái"
+                         >
+                            <Edit2 size={12} className="mr-1" /> Chỉnh sửa
+                         </button>
                      </div>
                  </div>
              ))}
@@ -292,6 +369,104 @@ const TeachingProgress: React.FC = () => {
              )}
           </div>
       </div>
+
+      {/* EDIT MODAL */}
+      {editingItem && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+             <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                 <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
+                    <div>
+                        <h3 className="font-bold text-gray-800">Cập nhật môn học</h3>
+                        <p className="text-xs text-blue-600 font-medium">{editingItem.subjectName}</p>
+                    </div>
+                    <button onClick={() => setEditingItem(null)} className="text-gray-400 hover:text-red-500">
+                        <X size={20} />
+                    </button>
+                 </div>
+                 
+                 <div className="p-6 space-y-4">
+                     <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Trạng thái môn học</label>
+                        <select 
+                            className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                            value={editingItem.status}
+                            onChange={(e) => {
+                                const newStatus = e.target.value;
+                                let updates: any = { status: newStatus };
+                                // If user chooses 'upcoming', clear existing dates
+                                if (newStatus === 'upcoming') {
+                                    updates.startDate = '';
+                                    updates.endDate = '';
+                                    updates.examDate = '';
+                                }
+                                setEditingItem({...editingItem, ...updates});
+                            }}
+                        >
+                            <option value="auto">Tự động (Theo tiến độ thực tế)</option>
+                            <option value="upcoming">Sắp học (Chưa triển khai)</option>
+                            <option value="in-progress">Đang học</option>
+                            <option value="completed">Đã hoàn thành</option>
+                        </select>
+                        <p className="text-[10px] text-gray-500 mt-1">
+                            * "Tự động": Hệ thống tự tính toán dựa trên số tiết đã dạy và ngày tháng.
+                        </p>
+                     </div>
+
+                     <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Phân công giáo viên</label>
+                        <select 
+                            className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                            value={editingItem.selectedTeacherId}
+                            onChange={(e) => setEditingItem({...editingItem, selectedTeacherId: e.target.value})}
+                        >
+                            <option value="">-- Chưa phân công --</option>
+                            {teachers.map(t => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                        </select>
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Ngày bắt đầu</label>
+                            <input 
+                                type="date"
+                                className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                value={editingItem.startDate}
+                                onChange={(e) => setEditingItem({...editingItem, startDate: e.target.value})}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Ngày kết thúc</label>
+                            <input 
+                                type="date"
+                                className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                value={editingItem.endDate}
+                                onChange={(e) => setEditingItem({...editingItem, endDate: e.target.value})}
+                            />
+                        </div>
+                     </div>
+
+                     <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Ngày thi (Dự kiến/Chính thức)</label>
+                        <input 
+                            type="date"
+                            className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={editingItem.examDate}
+                            onChange={(e) => setEditingItem({...editingItem, examDate: e.target.value})}
+                        />
+                     </div>
+                 </div>
+
+                 <div className="p-4 border-t bg-gray-50 flex justify-end gap-2">
+                    <button onClick={() => setEditingItem(null)} className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded text-sm">Hủy</button>
+                    <button onClick={handleSaveModal} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2 text-sm shadow">
+                        <Save size={16} /> Lưu thay đổi
+                    </button>
+                 </div>
+             </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo } from 'react';
 import { useApp } from '../store/AppContext';
 import { Teacher, Subject, ClassEntity } from '../types';
 import { Plus, Trash2, Edit2, Save, X, Filter, Search, Phone, Upload, HelpCircle, Users, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 
 const Management: React.FC = () => {
   const { 
@@ -14,7 +14,7 @@ const Management: React.FC = () => {
   
   const [activeTab, setActiveTab] = useState<'teachers' | 'subjects' | 'classes'>('teachers');
 
-  const [newTeacher, setNewTeacher] = useState<Partial<Teacher>>({});
+  const [newTeacher, setNewTeacher] = useState<Partial<Teacher>>({ title: 'Thầy' });
   const [editingTeacherId, setEditingTeacherId] = useState<string | null>(null);
   const [teacherSearch, setTeacherSearch] = useState('');
   const [teacherSort, setTeacherSort] = useState<'asc' | 'desc' | 'default'>('default');
@@ -27,6 +27,7 @@ const Management: React.FC = () => {
   const [newClass, setNewClass] = useState<Partial<ClassEntity>>({});
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [classSearch, setClassSearch] = useState('');
+  const [classSortMajor, setClassSortMajor] = useState<'asc' | 'desc' | 'default'>('default'); // NEW State for class sorting
 
   const fileInputTeacherRef = useRef<HTMLInputElement>(null);
   const fileInputSubjectRef = useRef<HTMLInputElement>(null);
@@ -68,10 +69,32 @@ const Management: React.FC = () => {
       else setTeacherSort('default');
   };
 
+  // Class Sorting Logic (NEW)
+  const sortedClasses = useMemo(() => {
+      let list = classes.filter(c => c.name.toLowerCase().includes(classSearch.toLowerCase()));
+
+      if (classSortMajor === 'default') return list;
+
+      return [...list].sort((a, b) => {
+          const majorA = majors.find(m => m.id === a.majorId)?.name || '';
+          const majorB = majors.find(m => m.id === b.majorId)?.name || '';
+          
+          const compare = majorA.localeCompare(majorB, 'vi');
+          return classSortMajor === 'asc' ? compare : -compare;
+      });
+  }, [classes, classSearch, classSortMajor, majors]);
+
+  const toggleClassSortMajor = () => {
+      if (classSortMajor === 'default') setClassSortMajor('asc');
+      else if (classSortMajor === 'asc') setClassSortMajor('desc');
+      else setClassSortMajor('default');
+  };
+
   // Handlers
   const handleSaveTeacher = () => {
     if (newTeacher.name) {
       const teacherData = {
+          title: newTeacher.title || 'Thầy',
           name: newTeacher.name,
           phone: newTeacher.phone || '',
           bank: newTeacher.bank || '',
@@ -86,7 +109,7 @@ const Management: React.FC = () => {
       } else {
         addTeacher(teacherData as Teacher);
       }
-      setNewTeacher({});
+      setNewTeacher({ title: 'Thầy' });
     }
   };
 
@@ -96,7 +119,7 @@ const Management: React.FC = () => {
   };
 
   const handleCancelTeacher = () => {
-    setNewTeacher({});
+    setNewTeacher({ title: 'Thầy' });
     setEditingTeacherId(null);
   }
 
@@ -124,14 +147,15 @@ const Management: React.FC = () => {
               // Remove header
               const rows = data.slice(1) as any[];
               
-              // Map columns: 0: Name, 1: Phone, 2: Bank, 3: Account, 4: Rate
+              // Map columns: 0: Title, 1: Name, 2: Phone, 3: Bank, 4: Account, 5: Rate, 6: MainSubject
               const newTeachers: Omit<Teacher, 'id'>[] = rows.map(row => ({
-                  name: row[0] || '',
-                  phone: row[1] ? String(row[1]) : '',
-                  bank: row[2] ? String(row[2]) : '',
-                  accountNumber: row[3] ? String(row[3]) : '',
-                  mainSubject: '', // Default empty, user can update later
-                  ratePerPeriod: row[4] ? Number(row[4]) : 0
+                  title: row[0] || 'Thầy',
+                  name: row[1] || '',
+                  phone: row[2] ? String(row[2]) : '',
+                  bank: row[3] ? String(row[3]) : '',
+                  accountNumber: row[4] ? String(row[4]) : '',
+                  ratePerPeriod: row[5] ? Number(row[5]) : 0,
+                  mainSubject: row[6] ? String(row[6]) : '', // Mapped Main Subject
               })).filter(t => t.name);
 
               if (newTeachers.length > 0) {
@@ -352,59 +376,87 @@ const Management: React.FC = () => {
 
        {activeTab === 'teachers' && (
          <div className="space-y-4">
-            <div className="bg-white p-4 rounded shadow grid grid-cols-1 md:grid-cols-3 gap-4">
-               <input placeholder="Họ tên" className="border p-2 rounded" value={newTeacher.name || ''} onChange={e => setNewTeacher({...newTeacher, name: e.target.value})} />
-               <input placeholder="Điện thoại" className="border p-2 rounded" value={newTeacher.phone || ''} onChange={e => setNewTeacher({...newTeacher, phone: e.target.value})} />
-               <input placeholder="Số tài khoản" className="border p-2 rounded" value={newTeacher.accountNumber || ''} onChange={e => setNewTeacher({...newTeacher, accountNumber: e.target.value})} />
-               <input placeholder="Ngân hàng" className="border p-2 rounded" value={newTeacher.bank || ''} onChange={e => setNewTeacher({...newTeacher, bank: e.target.value})} />
-               <input type="number" placeholder="Thù lao/tiết" className="border p-2 rounded" value={newTeacher.ratePerPeriod || ''} onChange={e => setNewTeacher({...newTeacher, ratePerPeriod: Number(e.target.value)})} />
-               
-               <div className="flex gap-2">
-                 <button onClick={handleSaveTeacher} className={`flex-1 text-white p-2 rounded flex justify-center items-center ${editingTeacherId ? 'bg-orange-500' : 'bg-blue-600'}`}>
-                   {editingTeacherId ? <><Save size={18} className="mr-1"/> Cập nhật</> : <><Plus size={18} className="mr-1"/> Thêm</>}
-                 </button>
-                 {editingTeacherId && (
-                   <button onClick={handleCancelTeacher} className="bg-gray-300 text-gray-700 p-2 rounded">
-                     <X size={18} />
-                   </button>
-                 )}
+            <div className="bg-white p-4 rounded shadow grid grid-cols-1 md:grid-cols-12 gap-4">
+               <div className="md:col-span-2">
+                   <select 
+                        className="border p-2 rounded w-full" 
+                        value={newTeacher.title || 'Thầy'} 
+                        onChange={e => setNewTeacher({...newTeacher, title: e.target.value})}
+                   >
+                       <option value="Thầy">Thầy</option>
+                       <option value="Cô">Cô</option>
+                   </select>
                </div>
-            </div>
+               <div className="md:col-span-4">
+                   <input placeholder="Họ tên" className="border p-2 rounded w-full" value={newTeacher.name || ''} onChange={e => setNewTeacher({...newTeacher, name: e.target.value})} />
+               </div>
+               <div className="md:col-span-6">
+                   <input placeholder="Môn dạy (Chuyên môn)" className="border p-2 rounded w-full" value={newTeacher.mainSubject || ''} onChange={e => setNewTeacher({...newTeacher, mainSubject: e.target.value})} />
+               </div>
 
-            <div className="bg-white p-3 rounded shadow border border-gray-100 flex flex-col md:flex-row items-center gap-3">
-              <div className="flex items-center gap-2 flex-1 w-full">
-                  <Search size={20} className="text-gray-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Tìm kiếm giáo viên theo tên..." 
-                    className="flex-1 outline-none text-sm"
-                    value={teacherSearch}
-                    onChange={(e) => setTeacherSearch(e.target.value)}
-                  />
-                  {teacherSearch && (
-                    <button onClick={() => setTeacherSearch('')} className="text-gray-400 hover:text-gray-600">
-                      <X size={16} />
-                    </button>
-                  )}
-              </div>
-              <div className="flex items-center gap-2">
-                 <input type="file" ref={fileInputTeacherRef} accept=".xlsx,.xls" className="hidden" onChange={handleTeacherFileUpload} />
-                 <button onClick={() => fileInputTeacherRef.current?.click()} className="flex items-center gap-1 text-sm bg-green-50 text-green-700 px-3 py-1.5 rounded hover:bg-green-100 border border-green-200">
-                    <Upload size={16} /> Nhập Excel
-                 </button>
-                 <div className="relative group">
-                    <HelpCircle size={18} className="text-gray-400 cursor-help" />
-                    <div className="absolute right-0 top-8 w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg z-10 hidden group-hover:block">
-                       File Excel: <strong>Họ tên | Điện thoại | Ngân hàng | Số TK | Thù lao</strong>
+               <div className="md:col-span-3">
+                   <input placeholder="Điện thoại" className="border p-2 rounded w-full" value={newTeacher.phone || ''} onChange={e => setNewTeacher({...newTeacher, phone: e.target.value})} />
+               </div>
+               <div className="md:col-span-2">
+                   <input placeholder="Ngân hàng" className="border p-2 rounded w-full" value={newTeacher.bank || ''} onChange={e => setNewTeacher({...newTeacher, bank: e.target.value})} />
+               </div>
+               <div className="md:col-span-4">
+                   <input placeholder="Số tài khoản" className="border p-2 rounded w-full" value={newTeacher.accountNumber || ''} onChange={e => setNewTeacher({...newTeacher, accountNumber: e.target.value})} />
+               </div>
+               <div className="md:col-span-3 flex gap-2">
+                    <input type="number" placeholder="Thù lao/tiết" className="border p-2 rounded w-full" value={newTeacher.ratePerPeriod || ''} onChange={e => setNewTeacher({...newTeacher, ratePerPeriod: Number(e.target.value)})} />
+               </div>
+               
+               <div className="md:col-span-12 flex flex-col lg:flex-row gap-4 justify-between items-center border-t pt-4 mt-2">
+                 {/* Left: Search & Import */}
+                 <div className="flex w-full lg:w-auto gap-3 items-center order-2 lg:order-1">
+                    <div className="relative flex-1 lg:w-64">
+                        <Search size={18} className="text-gray-400 absolute left-2 top-1/2 -translate-y-1/2" />
+                        <input 
+                            type="text" 
+                            placeholder="Tìm kiếm giáo viên..." 
+                            className="pl-9 pr-8 py-2 border rounded text-sm w-full outline-none focus:ring-2 focus:ring-blue-500"
+                            value={teacherSearch}
+                            onChange={(e) => setTeacherSearch(e.target.value)}
+                        />
+                         {teacherSearch && (
+                            <button onClick={() => setTeacherSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                              <X size={14} />
+                            </button>
+                          )}
                     </div>
+                    
+                     <input type="file" ref={fileInputTeacherRef} accept=".xlsx,.xls" className="hidden" onChange={handleTeacherFileUpload} />
+                     <button onClick={() => fileInputTeacherRef.current?.click()} className="flex items-center gap-1 text-sm bg-green-50 text-green-700 px-3 py-2 rounded hover:bg-green-100 border border-green-200 whitespace-nowrap">
+                        <Upload size={16} /> <span className="hidden sm:inline">Nhập Excel</span>
+                     </button>
+                     <div className="relative group">
+                        <HelpCircle size={18} className="text-gray-400 cursor-help" />
+                        <div className="absolute left-0 bottom-full mb-2 w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg z-10 hidden group-hover:block">
+                           File Excel: <strong>Danh xưng | Họ tên | Điện thoại | Ngân hàng | Số TK | Thù lao | Môn dạy</strong>
+                        </div>
+                     </div>
                  </div>
-              </div>
+
+                 {/* Right: Action Buttons */}
+                 <div className="flex gap-2 w-full lg:w-auto justify-end order-1 lg:order-2">
+                     {editingTeacherId && (
+                       <button onClick={handleCancelTeacher} className="bg-gray-100 text-gray-600 px-4 py-2 rounded hover:bg-gray-200">
+                         Hủy
+                       </button>
+                     )}
+                     <button onClick={handleSaveTeacher} className={`text-white px-4 py-2 rounded flex justify-center items-center shadow-sm ${editingTeacherId ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                       {editingTeacherId ? <><Save size={18} className="mr-1"/> Cập nhật</> : <><Plus size={18} className="mr-1"/> Thêm giáo viên</>}
+                     </button>
+                 </div>
+               </div>
             </div>
 
             <div className="bg-white rounded shadow overflow-hidden">
                <table className="w-full text-left">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="p-3 w-20">Danh xưng</th>
                       <th 
                         className="p-3 cursor-pointer hover:bg-gray-200 transition-colors select-none flex items-center gap-1 group"
                         onClick={toggleTeacherSort}
@@ -415,6 +467,7 @@ const Management: React.FC = () => {
                         {teacherSort === 'asc' && <ArrowUp size={14} className="text-blue-600" />}
                         {teacherSort === 'desc' && <ArrowDown size={14} className="text-blue-600" />}
                       </th>
+                      <th className="p-3">Môn dạy</th>
                       <th className="p-3">Điện thoại</th>
                       <th className="p-3">Ngân hàng</th>
                       <th className="p-3">Thù lao</th>
@@ -424,7 +477,9 @@ const Management: React.FC = () => {
                   <tbody>
                     {sortedTeachers.map(t => (
                       <tr key={t.id} className="border-t hover:bg-gray-50">
+                        <td className="p-3 text-gray-600">{t.title}</td>
                         <td className="p-3 font-medium">{t.name}</td>
+                        <td className="p-3 text-gray-600">{t.mainSubject}</td>
                         <td className="p-3">{t.phone}</td>
                         <td className="p-3">{t.bank} - {t.accountNumber}</td>
                         <td className="p-3">{t.ratePerPeriod.toLocaleString()}</td>
@@ -436,7 +491,7 @@ const Management: React.FC = () => {
                     ))}
                     {sortedTeachers.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="p-8 text-center text-gray-400 italic">Không tìm thấy giáo viên nào.</td>
+                        <td colSpan={7} className="p-8 text-center text-gray-400 italic">Không tìm thấy giáo viên nào.</td>
                       </tr>
                     )}
                   </tbody>
@@ -535,22 +590,46 @@ const Management: React.FC = () => {
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4 items-end">
                   <div className="space-y-1">
                      <p className="text-sm font-bold text-gray-600">Giáo viên phụ trách 1</p>
-                     <div className="flex items-center gap-2">
-                        <input className="border p-2 rounded flex-1 text-sm" placeholder="Họ tên" value={newSubject.teacher1 || ''} onChange={e => setNewSubject({...newSubject, teacher1: e.target.value})} />
-                        <div className="relative flex-1">
-                            <Phone size={14} className="text-gray-400 absolute left-2 top-1/2 -translate-y-1/2" />
-                            <input className="border p-2 pl-8 rounded w-full text-sm" placeholder="Số điện thoại" value={newSubject.phone1 || ''} onChange={e => setNewSubject({...newSubject, phone1: e.target.value})} />
-                        </div>
-                     </div>
+                     <select
+                        className="border p-2 rounded w-full text-sm"
+                        value={newSubject.teacher1 || ''}
+                        onChange={(e) => {
+                            const selectedName = e.target.value;
+                            const teacher = teachers.find(t => t.name === selectedName);
+                            setNewSubject({
+                                ...newSubject,
+                                teacher1: selectedName,
+                                phone1: teacher ? teacher.phone : ''
+                            });
+                        }}
+                     >
+                        <option value="">-- Chọn giáo viên --</option>
+                        {teachers.map(t => (
+                            <option key={t.id} value={t.name}>{t.name}</option>
+                        ))}
+                     </select>
                   </div>
                   <div className="space-y-1">
                      <p className="text-sm font-bold text-gray-600">Giáo viên phụ trách 2</p>
                      <div className="flex items-center gap-2">
-                        <input className="border p-2 rounded flex-1 text-sm" placeholder="Họ tên" value={newSubject.teacher2 || ''} onChange={e => setNewSubject({...newSubject, teacher2: e.target.value})} />
-                        <div className="relative flex-1">
-                            <Phone size={14} className="text-gray-400 absolute left-2 top-1/2 -translate-y-1/2" />
-                            <input className="border p-2 pl-8 rounded w-full text-sm" placeholder="Số điện thoại" value={newSubject.phone2 || ''} onChange={e => setNewSubject({...newSubject, phone2: e.target.value})} />
-                        </div>
+                        <select
+                            className="border p-2 rounded w-full text-sm"
+                            value={newSubject.teacher2 || ''}
+                            onChange={(e) => {
+                                const selectedName = e.target.value;
+                                const teacher = teachers.find(t => t.name === selectedName);
+                                setNewSubject({
+                                    ...newSubject,
+                                    teacher2: selectedName,
+                                    phone2: teacher ? teacher.phone : ''
+                                });
+                            }}
+                        >
+                            <option value="">-- Chọn giáo viên --</option>
+                            {teachers.map(t => (
+                                <option key={t.id} value={t.name}>{t.name}</option>
+                            ))}
+                        </select>
                         <div className="flex gap-2">
                              {editingSubjectId && (
                                <button onClick={handleCancelSubject} className="bg-gray-300 text-gray-700 p-2 rounded px-3 text-sm whitespace-nowrap h-[38px]">Hủy</button>
@@ -677,16 +756,23 @@ const Management: React.FC = () => {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="p-3">Tên lớp</th>
-                      <th className="p-3">Ngành</th>
+                      <th 
+                        className="p-3 cursor-pointer hover:bg-gray-200 transition-colors select-none flex items-center gap-1 group"
+                        onClick={toggleClassSortMajor}
+                        title="Bấm để sắp xếp theo ngành"
+                      >
+                        Ngành
+                        {classSortMajor === 'default' && <ArrowUpDown size={14} className="text-gray-400 group-hover:text-gray-600" />}
+                        {classSortMajor === 'asc' && <ArrowUp size={14} className="text-blue-600" />}
+                        {classSortMajor === 'desc' && <ArrowDown size={14} className="text-blue-600" />}
+                      </th>
                       <th className="p-3">Số lượng</th>
                       <th className="p-3">Niên khóa</th>
                       <th className="p-3">Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {classes
-                      .filter(c => c.name.toLowerCase().includes(classSearch.toLowerCase()))
-                      .map(c => (
+                    {sortedClasses.map(c => (
                       <tr key={c.id} className="border-t hover:bg-gray-50">
                         <td className="p-3 font-medium">{c.name}</td>
                         <td className="p-3">{majors.find(m => m.id === c.majorId)?.name}</td>
@@ -698,9 +784,13 @@ const Management: React.FC = () => {
                         </td>
                       </tr>
                     ))}
-                    {classes.filter(c => c.name.toLowerCase().includes(classSearch.toLowerCase())).length === 0 && (
+                    {sortedClasses.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="p-8 text-center text-gray-400 italic">Không tìm thấy lớp học nào.</td>
+                        <td colSpan={5} className="p-8 text-center text-gray-400 italic">
+                            {classSearch 
+                             ? `Không tìm thấy lớp học nào phù hợp với "${classSearch}".` 
+                             : `Không tìm thấy lớp học nào.`}
+                        </td>
                       </tr>
                     )}
                   </tbody>

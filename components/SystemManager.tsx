@@ -110,6 +110,7 @@ Cách dùng: Nhập tên biến (bao gồm cả dấu ngoặc nhọn) vào ô Ex
 
 1. THÔNG TIN CHUNG (Thay thế giá trị đơn):
    {teacherName}        : Tên giáo viên
+   {teacherTitle}       : Danh xưng (Thầy/Cô)
    {teacherPhone}       : Số điện thoại
    {teacherBank}        : Tên ngân hàng
    {teacherAccount}     : Số tài khoản
@@ -158,6 +159,7 @@ Cách dùng: Copy các biến bên dưới (bao gồm cả dấu ngoặc nhọn)
 
 1. THÔNG TIN CÁ NHÂN & MÔN HỌC:
    {teacherName}        : Tên giáo viên
+   {teacherTitle}       : Danh xưng (Thầy/Cô)
    {subjectName}        : Tên môn học
    {className}          : Lớp dạy
    {totalPeriods}       : Tổng số tiết

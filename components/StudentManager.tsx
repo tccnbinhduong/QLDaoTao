@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo } from 'react';
 import { useApp } from '../store/AppContext';
 import { Student } from '../types';
 import { Plus, Trash2, Edit2, Upload, Save, X, Filter, User, HelpCircle, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown, Search } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import { format } from 'date-fns';
 import { parseLocal } from '../utils';
 
@@ -71,7 +71,8 @@ const StudentManager: React.FC = () => {
     setFormData({ 
         classId: selectedClassId,
         studentCode: '',
-        name: '', dob: '', pob: '', fatherName: '', motherName: '', phone: '' 
+        name: '', dob: '', pob: '', fatherName: '', motherName: '', phone: '',
+        status: 'studying' // Default status
     });
     setEditingStudentId(null);
     setShowModal(true);
@@ -97,7 +98,8 @@ const StudentManager: React.FC = () => {
         pob: formData.pob || '',
         fatherName: formData.fatherName || '',
         motherName: formData.motherName || '',
-        phone: formData.phone || ''
+        phone: formData.phone || '',
+        status: formData.status || 'studying'
     };
 
     if (editingStudentId) {
@@ -145,7 +147,8 @@ const StudentManager: React.FC = () => {
                 pob: row[3] ? String(row[3]) : '',
                 fatherName: row[4] ? String(row[4]) : '',
                 motherName: row[5] ? String(row[5]) : '',
-                phone: row[6] ? String(row[6]) : ''
+                phone: row[6] ? String(row[6]) : '',
+                status: 'studying' as 'studying' | 'reserved' | 'dropped' // Default status for imported students
             })).filter(s => s.name); // Filter empty rows
 
             if (newStudents.length > 0) {
@@ -185,8 +188,8 @@ const StudentManager: React.FC = () => {
     wsData.push([""]); // Spacer
 
     // 3. Table Header
-    // Columns: STT, MSSV, Họ, Tên, Ngày sinh, Ghi chú
-    wsData.push(["STT", "MSSV", "Họ", "Tên", "Ngày sinh", "Ghi chú"]);
+    // Columns: STT, MSSV, Họ, Tên, Ngày sinh, Trạng thái, Ghi chú
+    wsData.push(["STT", "MSSV", "Họ", "Tên", "Ngày sinh", "Trạng thái", "Ghi chú"]);
 
     // 4. Data Rows
     // Use sortedStudents for export as well if user wants the sorted list
@@ -199,12 +202,17 @@ const StudentManager: React.FC = () => {
         let dobStr = s.dob;
         try { dobStr = format(parseLocal(s.dob), 'dd/MM/yyyy'); } catch {}
 
+        let statusStr = "Đang học";
+        if (s.status === 'reserved') statusStr = "Bảo lưu";
+        if (s.status === 'dropped') statusStr = "Nghỉ học";
+
         wsData.push([
             index + 1,
             s.studentCode,
             lastName,
             firstName,
             dobStr,
+            statusStr,
             "" // Ghi chú empty
         ]);
     });
@@ -212,7 +220,7 @@ const StudentManager: React.FC = () => {
     // Add some empty rows if list is small to look good
     if (sortedStudents.length < 5) {
         for(let i=0; i< (5 - sortedStudents.length); i++) {
-            wsData.push([sortedStudents.length + i + 1, "", "", "", "", ""]);
+            wsData.push([sortedStudents.length + i + 1, "", "", "", "", "", ""]);
         }
     }
 
@@ -239,12 +247,21 @@ const StudentManager: React.FC = () => {
         { wch: 25 }, // Họ
         { wch: 10 }, // Tên
         { wch: 15 }, // Ngày sinh
+        { wch: 15 }, // Trạng thái
         { wch: 20 }  // Ghi chú
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, "DanhSachHocSinh");
     XLSX.writeFile(wb, `DanhSach_${currentClass.name}.xlsx`);
   };
+
+  const getStatusLabel = (status: string) => {
+      switch(status) {
+          case 'reserved': return <span className="px-2 py-1 rounded-full text-xs font-semibold bg-orange-100 text-orange-700">Bảo lưu</span>;
+          case 'dropped': return <span className="px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">Nghỉ học</span>;
+          default: return <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">Đang học</span>;
+      }
+  }
 
   return (
     <div className="space-y-6">
@@ -339,7 +356,7 @@ const StudentManager: React.FC = () => {
                             {sortOrder === 'desc' && <ArrowDown size={14} className="text-blue-600" />}
                         </th>
                         <th className="p-3 border-b">Ngày sinh</th>
-                        <th className="p-3 border-b">Nơi sinh</th>
+                        <th className="p-3 border-b">Trạng thái</th>
                         <th className="p-3 border-b">Phụ huynh</th>
                         <th className="p-3 border-b">Liên hệ</th>
                         <th className="p-3 border-b text-center">Hành động</th>
@@ -369,7 +386,9 @@ const StudentManager: React.FC = () => {
                                         }
                                     })() : ''}
                                 </td>
-                                <td className="p-3">{s.pob}</td>
+                                <td className="p-3">
+                                    {getStatusLabel(s.status || 'studying')}
+                                </td>
                                 <td className="p-3">
                                     <div className="text-xs">
                                         {s.fatherName && <div><span className="font-semibold text-gray-500">Bố:</span> {s.fatherName}</div>}
@@ -463,7 +482,7 @@ const StudentManager: React.FC = () => {
                                 onChange={e => setFormData({...formData, motherName: e.target.value})}
                             />
                         </div>
-                        <div className="md:col-span-2">
+                        <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Số điện thoại liên hệ</label>
                             <input 
                                 className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none" 
@@ -471,6 +490,18 @@ const StudentManager: React.FC = () => {
                                 onChange={e => setFormData({...formData, phone: e.target.value})}
                                 placeholder="Nhập số điện thoại..."
                             />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Trạng thái</label>
+                            <select 
+                                className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                value={formData.status || 'studying'}
+                                onChange={e => setFormData({...formData, status: e.target.value as any})}
+                            >
+                                <option value="studying">Đang học</option>
+                                <option value="reserved">Bảo lưu</option>
+                                <option value="dropped">Nghỉ học</option>
+                            </select>
                         </div>
                     </div>
                 </div>

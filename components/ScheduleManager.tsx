@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId, base64ToArrayBuffer } from '../utils';
-import { ScheduleItem, ScheduleStatus } from '../types';
+import { ScheduleItem, ScheduleStatus, Teacher } from '../types';
 import { format, addDays, isSameDay, getWeek } from 'date-fns';
-import { vi } from 'date-fns/locale/vi';
+import { vi } from 'date-fns/locale';
 import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download, BookOpen, Mail } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import saveAs from 'file-saver';
@@ -163,9 +163,35 @@ const ScheduleManager: React.FC = () => {
     });
   }, [schedules, subjects, teachers, classes, selectedClassId]);
 
+  // NEW: Group teachers by recommendation based on selected subject
+  const currentSubjectId = editItem ? editItem.subjectId : formSubjectId;
+  const { suggestedTeachers, otherTeachers } = useMemo(() => {
+    const subj = subjects.find(s => s.id === currentSubjectId);
+    if (!subj) return { suggestedTeachers: [], otherTeachers: teachers };
+
+    const responsibleNames = [subj.teacher1, subj.teacher2, subj.teacher3]
+        .filter(n => n && n.trim() !== '')
+        .map(n => n!.toLowerCase().trim());
+    
+    if (responsibleNames.length === 0) return { suggestedTeachers: [], otherTeachers: teachers };
+
+    const suggested: Teacher[] = [];
+    const others: Teacher[] = [];
+
+    teachers.forEach(t => {
+        if (responsibleNames.includes(t.name.toLowerCase().trim())) {
+            suggested.push(t);
+        } else {
+            others.push(t);
+        }
+    });
+    
+    return { suggestedTeachers: suggested, otherTeachers: others };
+  }, [currentSubjectId, teachers, subjects]);
+
 
   // Check if current form subject is shared
-  const currentFormSubject = subjects.find(s => s.id === (editItem ? editItem.subjectId : formSubjectId));
+  const currentFormSubject = subjects.find(s => s.id === currentSubjectId);
   const isFormSubjectShared = !!currentFormSubject?.isShared;
 
   // Initialize shared classes when form opens or subject changes
@@ -749,6 +775,7 @@ const ScheduleManager: React.FC = () => {
 
           // 3. Prepare Data Object
           const data = {
+              teacherTitle: teacher.title || 'Thầy/Cô', // NEW Variable
               teacherName: teacher.name,
               subjectName: subject.name,
               className: currentClass.name,
@@ -1073,9 +1100,20 @@ const ScheduleManager: React.FC = () => {
                  </div>
                  <div>
                     <label className="block text-sm font-medium mb-1">Giáo viên</label>
-                    <select value={editItem ? editItem.teacherId : formTeacherId} onChange={(e) => editItem ? setEditItem({...editItem, teacherId: e.target.value}) : setFormTeacherId(e.target.value)} className="w-full border rounded p-2">
+                    <select 
+                        value={editItem ? editItem.teacherId : formTeacherId} 
+                        onChange={(e) => editItem ? setEditItem({...editItem, teacherId: e.target.value}) : setFormTeacherId(e.target.value)} 
+                        className="w-full border rounded p-2"
+                    >
                         <option value="">Chọn giáo viên...</option>
-                        {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        {suggestedTeachers.length > 0 && (
+                            <optgroup label="Giáo viên phụ trách">
+                                {suggestedTeachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                            </optgroup>
+                        )}
+                        <optgroup label={suggestedTeachers.length > 0 ? "Giáo viên khác" : "Danh sách giáo viên"}>
+                            {otherTeachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        </optgroup>
                     </select>
                  </div>
               </div>
@@ -1086,21 +1124,32 @@ const ScheduleManager: React.FC = () => {
                     value={editItem ? editItem.subjectId : formSubjectId} 
                     onChange={(e) => {
                         const val = e.target.value;
+                        
+                        // Auto-detect teacher
+                        let autoTeacherId = '';
+                        const selectedSub = subjects.find(s => s.id === val);
+                        
+                        if (selectedSub) {
+                             const t1 = teachers.find(t => t.name.toLowerCase().trim() === selectedSub.teacher1?.toLowerCase().trim());
+                             if (t1) autoTeacherId = t1.id;
+                             else {
+                                 const t2 = teachers.find(t => t.name.toLowerCase().trim() === selectedSub.teacher2?.toLowerCase().trim());
+                                 if (t2) autoTeacherId = t2.id;
+                             }
+                        }
+                        
+                        const isExam = editItem ? editItem.type === 'exam' : formType === 'exam';
+                        const clsId = editItem ? editItem.classId : selectedClassId;
+                        if (isExam && val) {
+                            const historyTeacher = getTeacherForSubject(val, clsId);
+                            if (historyTeacher) autoTeacherId = historyTeacher;
+                        }
+                
                         if (editItem) {
-                            let updates = { ...editItem, subjectId: val };
-                            // Auto-select teacher if exam
-                            if (editItem.type === 'exam' && val) {
-                                const suggested = getTeacherForSubject(val, editItem.classId);
-                                if (suggested) updates.teacherId = suggested;
-                            }
-                            setEditItem(updates);
+                            setEditItem({ ...editItem, subjectId: val, teacherId: autoTeacherId });
                         } else {
                             setFormSubjectId(val);
-                            // Auto-select teacher if exam
-                            if (formType === 'exam' && val) {
-                                const suggested = getTeacherForSubject(val, selectedClassId);
-                                if (suggested) setFormTeacherId(suggested);
-                            }
+                            setFormTeacherId(autoTeacherId);
                         }
                     }} 
                     className="w-full border rounded p-2"

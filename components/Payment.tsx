@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { ScheduleStatus } from '../types';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
+import ExcelJS from 'exceljs'; // Import ExcelJS
+import saveAs from 'file-saver';
 import { Download, Trash2, CheckCircle, CreditCard, FileSpreadsheet } from 'lucide-react';
 import { format } from 'date-fns';
-import { parseLocal } from '../utils';
+import { parseLocal, base64ToArrayBuffer } from '../utils';
 
 const Payment: React.FC = () => {
   const { teachers, schedules, subjects, classes, templates } = useApp();
@@ -110,7 +112,7 @@ const Payment: React.FC = () => {
     XLSX.writeFile(wb, `ThongKe_${item.subjectName}_${item.className}.xlsx`);
   };
 
-  const exportExcelTemplate = (item: any) => {
+  const exportExcelTemplate = async (item: any) => {
       // 1. Check if templates exist
       const excelTemplates = templates.filter(t => t.type === 'payment_excel');
       if (excelTemplates.length === 0) {
@@ -131,6 +133,7 @@ const Payment: React.FC = () => {
           const actualTotalPeriods = relevantSchedules.reduce((sum, s) => sum + s.periodCount, 0);
 
           const replacements: Record<string, string> = {
+              "{teacherTitle}": teacherObj?.title || 'Thầy/Cô', // NEW variable
               "{teacherName}": item.teacherName,
               "{teacherPhone}": teacherObj?.phone || '',
               "{teacherBank}": teacherObj?.bank || '',
@@ -143,67 +146,92 @@ const Payment: React.FC = () => {
               "{toDate}": endDate,
           };
 
-          // 4. Read Template (STRIP BASE64 PREFIX)
-          const base64Content = template.content.split(',')[1];
-          const wb = XLSX.read(base64Content, { type: 'base64' });
-          const ws = wb.Sheets[wb.SheetNames[0]];
+          // 4. Load Template using ExcelJS
+          const buffer = base64ToArrayBuffer(template.content);
+          const workbook = new ExcelJS.Workbook();
+          await workbook.xlsx.load(buffer);
           
-          if (!ws['!ref']) {
-              alert("File mẫu Excel không có dữ liệu!");
+          // Assume data is in the first sheet
+          const ws = workbook.worksheets[0];
+          if (!ws) {
+              alert("File mẫu không hợp lệ.");
               return;
           }
 
-          const range = XLSX.utils.decode_range(ws['!ref']);
-
-          // 5. Replace Scalars
-          for (let R = range.s.r; R <= range.e.r; ++R) {
-              for (let C = range.s.c; C <= range.e.c; ++C) {
-                   const cellRef = XLSX.utils.encode_cell({r: R, c: C});
-                   if(!ws[cellRef] || ws[cellRef].t !== 's') continue;
-                   let val = ws[cellRef].v;
-                   Object.keys(replacements).forEach(key => {
-                       if(val.includes(key)) val = val.replace(key, replacements[key]);
-                   });
-                   ws[cellRef].v = val;
-              }
-          }
-
-          // 6. Find List Header and Insert Data
-          // Look for row with {date} placeholder
-          let startRow = -1;
+          // 5. Find List Header and Scalar Replacements
+          let listRowIndex = -1;
           const colMap: any = {};
-          
-          for (let R = range.s.r; R <= range.e.r; ++R) {
-              for (let C = range.s.c; C <= range.e.c; ++C) {
-                  const cellRef = XLSX.utils.encode_cell({r: R, c: C});
-                  if(!ws[cellRef]) continue;
-                  const val = String(ws[cellRef].v);
-                  if(val.includes('{date}')) { startRow = R; colMap['date'] = C; ws[cellRef].v = "Ngày dạy"; }
-                  if(val.includes('{periods}')) { startRow = R; colMap['periods'] = C; ws[cellRef].v = "Số tiết"; }
-                  if(val.includes('{type}')) { startRow = R; colMap['type'] = C; ws[cellRef].v = "Nội dung"; }
-                  if(val.includes('{note}')) { startRow = R; colMap['note'] = C; ws[cellRef].v = "Ghi chú"; }
-              }
-              if(startRow !== -1) break;
-          }
 
-          if (startRow !== -1) {
-              // Write data rows immediately after header, overwriting existing rows below
-              relevantSchedules.forEach((s, idx) => {
-                   const row = startRow + 1 + idx;
-                   if (colMap['date'] !== undefined) XLSX.utils.sheet_add_aoa(ws, [[ format(parseLocal(s.date), 'dd/MM/yyyy') ]], {origin: {r: row, c: colMap['date']}});
-                   if (colMap['periods'] !== undefined) XLSX.utils.sheet_add_aoa(ws, [[ s.periodCount ]], {origin: {r: row, c: colMap['periods']}});
-                   if (colMap['type'] !== undefined) XLSX.utils.sheet_add_aoa(ws, [[ s.type === 'exam' ? 'Thi' : 'Học' ]], {origin: {r: row, c: colMap['type']}});
-                   if (colMap['note'] !== undefined) XLSX.utils.sheet_add_aoa(ws, [[ s.note || '' ]], {origin: {r: row, c: colMap['note']}});
+          ws.eachRow((row, rowNumber) => {
+              row.eachCell((cell, colNumber) => {
+                  let val = cell.value ? String(cell.value) : '';
+                  
+                  // Detect list placeholders
+                  if(val.includes('{date}')) { listRowIndex = rowNumber; colMap['date'] = colNumber; }
+                  if(val.includes('{periods}')) { listRowIndex = rowNumber; colMap['periods'] = colNumber; }
+                  if(val.includes('{type}')) { listRowIndex = rowNumber; colMap['type'] = colNumber; }
+                  if(val.includes('{note}')) { listRowIndex = rowNumber; colMap['note'] = colNumber; }
+
+                  // Replace Scalars (Single values)
+                  Object.keys(replacements).forEach(key => {
+                      if(val.includes(key)) {
+                          val = val.replace(key, replacements[key]);
+                          cell.value = val;
+                      }
+                  });
               });
+          });
 
-              // Extend range if needed
-              const newMaxRow = startRow + 1 + relevantSchedules.length;
-              if(newMaxRow > range.e.r) {
-                  ws['!ref'] = XLSX.utils.encode_range({s: range.s, e: {r: newMaxRow, c: range.e.c}});
+          // 6. Handle List Insertion
+          if (listRowIndex !== -1 && relevantSchedules.length > 0) {
+              // Helper to fill a row with schedule data
+              const fillRow = (row: any, schedule: any) => {
+                  if(colMap['date']) row.getCell(colMap['date']).value = format(parseLocal(schedule.date), 'dd/MM/yyyy');
+                  if(colMap['periods']) row.getCell(colMap['periods']).value = schedule.periodCount;
+                  if(colMap['type']) row.getCell(colMap['type']).value = schedule.type === 'exam' ? 'Thi' : 'Học';
+                  if(colMap['note']) row.getCell(colMap['note']).value = schedule.note || '';
+                  
+                  // Clean up placeholders if they exist in the replaced row
+                  row.eachCell((cell: any) => {
+                      if (String(cell.value).includes('{') && String(cell.value).includes('}')) {
+                          // Try to clean up unreplaced tags in this specific row
+                          if(String(cell.value).includes('{date}')) cell.value = null;
+                          else if(String(cell.value).includes('{periods}')) cell.value = null;
+                          else if(String(cell.value).includes('{type}')) cell.value = null;
+                          else if(String(cell.value).includes('{note}')) cell.value = null;
+                      }
+                  });
+              };
+
+              // Strategy: 
+              // 1. Fill the FIRST item into the existing `listRowIndex` (preserving that row's style).
+              // 2. For remaining items, INSERT new rows below, inheriting style from the previous row ('i').
+              
+              // Fill first item
+              fillRow(ws.getRow(listRowIndex), relevantSchedules[0]);
+
+              // Insert remaining items
+              for (let i = 1; i < relevantSchedules.length; i++) {
+                  const newRowIdx = listRowIndex + i;
+                  // 'i' argument tells ExcelJS to inherit style from the row *before* the insertion point.
+                  const newRow = ws.insertRow(newRowIdx, [], 'i');
+                  fillRow(newRow, relevantSchedules[i]);
               }
+          } else if (listRowIndex !== -1) {
+              // Found placeholder row but no data -> Clear placeholders
+              const row = ws.getRow(listRowIndex);
+              row.eachCell((cell) => {
+                  const val = String(cell.value);
+                  if(val.includes('{date}') || val.includes('{periods}') || val.includes('{type}') || val.includes('{note}')) {
+                      cell.value = '';
+                  }
+              });
           }
 
-          XLSX.writeFile(wb, `PhieuThanhToan_${item.subjectName}.xlsx`);
+          // 7. Write Buffer and Save
+          const outBuffer = await workbook.xlsx.writeBuffer();
+          const blob = new Blob([outBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+          saveAs(blob, `PhieuThanhToan_${item.subjectName}.xlsx`);
 
       } catch (error) {
           console.error(error);

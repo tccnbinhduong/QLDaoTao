@@ -34,9 +34,9 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const INITIAL_DATA: AppState = {
   teachers: [
-    { id: '1', name: 'Nguyễn Văn Thái', phone: '0901234567', bank: 'VCB', accountNumber: '123456', mainSubject: '1', ratePerPeriod: 100000 },
-    { id: '2', name: 'Trần Thị Hà', phone: '0909876543', bank: 'ACB', accountNumber: '654321', mainSubject: '2', ratePerPeriod: 120000 },
-    { id: '3', name: 'Lê Văn Kha', phone: '0912345678', bank: 'Tech', accountNumber: '888888', mainSubject: '3', ratePerPeriod: 110000 },
+    { id: '1', title: 'Thầy', name: 'Nguyễn Văn Thái', phone: '0901234567', bank: 'VCB', accountNumber: '123456', mainSubject: '1', ratePerPeriod: 100000 },
+    { id: '2', title: 'Cô', name: 'Trần Thị Hà', phone: '0909876543', bank: 'ACB', accountNumber: '654321', mainSubject: '2', ratePerPeriod: 120000 },
+    { id: '3', title: 'Thầy', name: 'Lê Văn Kha', phone: '0912345678', bank: 'Tech', accountNumber: '888888', mainSubject: '3', ratePerPeriod: 110000 },
   ],
   subjects: [
     { id: '1', name: 'Đo lường và TBĐ', majorId: '2', totalPeriods: 30 }, 
@@ -50,8 +50,8 @@ const INITIAL_DATA: AppState = {
     { id: '2', name: 'Kế toán K15', studentCount: 35, majorId: '1', schoolYear: '2023-2026' },
   ],
   students: [
-    { id: '1', studentCode: 'SV001', classId: '1', name: 'Nguyễn Văn A', dob: '2005-01-15', pob: 'Hà Nội', fatherName: 'Nguyễn Văn B', motherName: 'Lê Thị C', phone: '0987654321' },
-    { id: '2', studentCode: 'SV002', classId: '1', name: 'Trần Thị B', dob: '2005-05-20', pob: 'Nam Định', fatherName: 'Trần Văn D', motherName: 'Phạm Thị E', phone: '0912345678' },
+    { id: '1', studentCode: 'SV001', classId: '1', name: 'Nguyễn Văn A', dob: '2005-01-15', pob: 'Hà Nội', fatherName: 'Nguyễn Văn B', motherName: 'Lê Thị C', phone: '0987654321', status: 'studying' },
+    { id: '2', studentCode: 'SV002', classId: '1', name: 'Trần Thị B', dob: '2005-05-20', pob: 'Nam Định', fatherName: 'Trần Văn D', motherName: 'Phạm Thị E', phone: '0912345678', status: 'studying' },
   ],
   majors: [
     { id: '1', name: 'Kế toán Doanh nghiệp' },
