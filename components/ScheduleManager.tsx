@@ -3,9 +3,9 @@ import { useApp } from '../store/AppContext';
 import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId, base64ToArrayBuffer } from '../utils';
 import { ScheduleItem, ScheduleStatus, Teacher } from '../types';
 import { format, addDays, isSameDay, getWeek } from 'date-fns';
-import { vi } from 'date-fns/locale/vi';
+import { vi } from 'date-fns/locale';
 import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download, BookOpen, Mail } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import saveAs from 'file-saver';
@@ -607,12 +607,16 @@ const ScheduleManager: React.FC = () => {
   };
 
   const handleExportExcel = () => {
-    // ... (Existing Excel Export Logic)
     const wb = XLSX.utils.book_new();
     const data: any[] = [];
     const merges: any[] = [];
+    const currentClass = classes.find(c => c.id === selectedClassId);
     
-    // 1. Header Row
+    // 0. Title Row (New)
+    const title = `LỊCH HỌC CỦA LỚP ${currentClass?.name || ''} TỪ NGÀY ${format(weekStart, 'dd/MM')} ĐẾN NGÀY ${format(addDays(weekStart, 6), 'dd/MM')}`.toUpperCase();
+    data.push([title]); // Row 0
+
+    // 1. Header Row (Moved to Row 1)
     const header = ['Buổi', 'Tiết', ...weekDays.map(d => format(d, 'EEEE - dd/MM', { locale: vi }).toUpperCase())];
     data.push(header);
 
@@ -636,20 +640,29 @@ const ScheduleManager: React.FC = () => {
                     if (item.status === ScheduleStatus.OFF) cellText += ` (NGHỈ)`;
                     else if (item.type === 'exam') cellText = `THI: ${subj?.name}`;
                     
-                    if (item.group) cellText += `\n(${item.group})`; // NEW: Group right after subject
+                    if (item.group) cellText += `\n(${item.group})`; // Group right after subject
 
                     cellText += `\nGV: ${tea?.name || '---'}`;
                     
-                    // NEW: Room and Progress on same line separated by |
+                    // Room and Progress on same line separated by |
                     cellText += `\nPhòng: ${item.roomId} | Tiết: ${displayCumulative}/${subj?.totalPeriods}`;
                     
                     rowData.push(cellText);
 
-                    // Add Merge for Multi-period classes
+                    // Add Merge for Multi-period classes (Shifted by 1 row due to title)
                     if (item.periodCount > 1) {
                         merges.push({
-                            s: { r: p, c: dayIndex + 2 }, // Row index is 'p' because header is index 0
-                            e: { r: p + item.periodCount - 1, c: dayIndex + 2 }
+                            s: { r: p + 1, c: dayIndex + 2 }, // p+1 because title is row 0, header is row 1. But 'p' starts at 1. The data rows in 'data' array are index 2 onwards.
+                            // p=1 -> data index 2 (row 3 in Excel).
+                            // Wait, let's map strictly.
+                            // data[0] = Title
+                            // data[1] = Header
+                            // data[2] = Period 1
+                            // ...
+                            // data[11] = Period 10
+                            // So row index for Period p is (p + 1).
+                            
+                            e: { r: p + item.periodCount, c: dayIndex + 2 }
                         });
                     }
                 } else {
@@ -673,20 +686,25 @@ const ScheduleManager: React.FC = () => {
 
     // 4. Styling & Merges
     if(!ws['!merges']) ws['!merges'] = [];
-    ws['!merges'].push({ s: { r: 1, c: 0 }, e: { r: 5, c: 0 } });
-    ws['!merges'].push({ s: { r: 6, c: 0 }, e: { r: 10, c: 0 } });
+    
+    // Title Merge (Row 0)
+    ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } });
+
+    // Session Merges (Morning: Period 1-5 -> Rows 2-6. Afternoon: Period 6-10 -> Rows 7-11)
+    ws['!merges'].push({ s: { r: 2, c: 0 }, e: { r: 6, c: 0 } });
+    ws['!merges'].push({ s: { r: 7, c: 0 }, e: { r: 11, c: 0 } });
     
     // Add dynamic class merges
     ws['!merges'].push(...merges);
 
-    // Footer merges
-    const footerRowStart = 12;
+    // Footer merges (Shifted by 1 row)
+    const footerRowStart = 13;
     ws['!merges'].push({ s: { r: footerRowStart, c: 2 }, e: { r: footerRowStart, c: 7 } });
     ws['!merges'].push({ s: { r: footerRowStart + 1, c: 2 }, e: { r: footerRowStart + 1, c: 7 } });
 
     // APPLY STYLES
     const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
-    for (let R = range.s.r; R <= 10; ++R) { // Only style the grid part (Rows 0-10)
+    for (let R = range.s.r; R <= 11; ++R) { // Only style the grid part (Rows 0-11)
         for (let C = range.s.c; C <= range.e.c; ++C) {
             const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
             if (!ws[cellRef]) continue;
@@ -703,22 +721,60 @@ const ScheduleManager: React.FC = () => {
                 right: { style: "thin", color: { rgb: "000000" } }
             };
 
-            // 1. Headers (Row 0)
+            // 0. Title (Row 0)
             if (R === 0) {
-                ws[cellRef].s.font = { name: "Arial", sz: 10, bold: true };
-                ws[cellRef].s.alignment = { horizontal: "center", vertical: "center", wrapText: true };
-                ws[cellRef].s.fill = { fgColor: { rgb: "EEEEEE" } };
+                 ws[cellRef].s.font = { name: "Arial", sz: 14, bold: true };
+                 ws[cellRef].s.alignment = { horizontal: "center", vertical: "center" };
+                 ws[cellRef].s.fill = { fgColor: { rgb: "FFFFFF" } };
+                 ws[cellRef].s.border = {}; // No border for title
             }
 
-            // 2. Buổi & Tiết Columns (Col 0, 1)
+            // 1. Headers (Row 1)
+            if (R === 1) {
+                ws[cellRef].s.font = { name: "Arial", sz: 10, bold: true };
+                ws[cellRef].s.alignment = { horizontal: "center", vertical: "center", wrapText: true };
+                ws[cellRef].s.fill = { fgColor: { rgb: "FFFFFF" } }; // Default white or transparent
+            }
+
+            // 2. Buổi & Tiết Columns (Col 0, 1) - Bold
             if (C === 0 || C === 1) {
                 ws[cellRef].s.font = { name: "Arial", sz: 10, bold: true };
                 ws[cellRef].s.alignment = { horizontal: "center", vertical: "center", wrapText: true };
             }
 
-            // 3. Afternoon Sessions (Rows 6-10) -> Color Blue
-            if (R >= 6 && R <= 10) {
-                 ws[cellRef].s.fill = { fgColor: { rgb: "DDEBF7" } };
+            // 3. Data Cells (Row 2-11, Col 2-7) - Determine Color
+            if (R >= 2 && R <= 11 && C >= 2) {
+                 // Re-calculate the item for this cell to determine color
+                 const period = R - 1; // Row 2 is Period 1
+                 const dayIndex = C - 2; // Col 2 is Day 0
+                 const day = weekDays[dayIndex];
+                 const dateStr = format(day, 'yyyy-MM-dd');
+                 const item = filteredSchedules.find(s => s.date === dateStr && s.startPeriod === period);
+
+                 if (item) {
+                      // Apply Bold for Subject (Line 1) via rich text? ExcelJS supports rich text better. 
+                      // SheetJS/xlsx-js-style mostly supports basic font.
+                      // We will bold the whole cell if it's a class.
+                      ws[cellRef].s.font = { name: "Arial", sz: 10, bold: true }; // Bold text for readability
+
+                      const subj = subjects.find(s => s.id === item.subjectId);
+                      const seqInfo = getSessionSequenceInfo(item, schedules, subj?.totalPeriods);
+
+                      if (item.status === ScheduleStatus.OFF) {
+                          ws[cellRef].s.fill = { fgColor: { rgb: "E0E0E0" } }; // Gray
+                      } else if (item.type === 'exam') {
+                          ws[cellRef].s.fill = { fgColor: { rgb: "FFF2CC" } }; // Light Yellow
+                      } else {
+                          // COLOR LOGIC: First = Orange, Last = Red, Middle = Blue
+                          if (seqInfo.isFirst) {
+                              ws[cellRef].s.fill = { fgColor: { rgb: "FCE4D6" } }; // Light Orange
+                          } else if (seqInfo.isLast) {
+                               ws[cellRef].s.fill = { fgColor: { rgb: "F8CECC" } }; // Light Red
+                          } else {
+                               ws[cellRef].s.fill = { fgColor: { rgb: "DDEBF7" } }; // Light Blue
+                          }
+                      }
+                 }
             }
         }
     }

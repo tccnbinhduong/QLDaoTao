@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo } from 'react';
 import { useApp } from '../store/AppContext';
 import { Student } from '../types';
 import { Plus, Trash2, Edit2, Upload, Save, X, Filter, User, HelpCircle, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown, Search } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import saveAs from 'file-saver';
 import { format } from 'date-fns';
@@ -270,24 +270,32 @@ const StudentManager: React.FC = () => {
 
     } else {
         // === DEFAULT FALLBACK (No Template) ===
-        // Create new Workbook
         const wb = XLSX.utils.book_new();
-        const wsData = [];
+        const wsData: any[][] = [];
 
-        // 1. Title
+        // Header Rows
+        // Row 0
+        wsData.push(["SỞ GIÁO DỤC & ĐÀO TẠO BÌNH DƯƠNG", "", "", "", "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM"]);
+        // Row 1
+        wsData.push(["TRƯỜNG TRUNG CẤP CÔNG NGHIỆP BÌNH DƯƠNG", "", "", "", "Độc lập - Tự do - Hạnh phúc"]);
+        // Row 2 (Empty)
+        wsData.push([]);
+        // Row 3 (Title)
         wsData.push(["", "", "DANH SÁCH HỌC SINH"]); 
-        wsData.push([""]); // Spacer
+        // Row 4 (Empty)
+        wsData.push([]);
+        
+        // Row 5: Info 1
+        wsData.push(["Lớp:", currentClass.name, "", "", "Khóa học:", currentClass.schoolYear]);
+        // Row 6: Info 2
+        wsData.push(["Ngành:", currentMajor?.name || "", "", "", "Bậc đào tạo:", "Trung cấp"]);
+        // Row 7 (Empty)
+        wsData.push([]);
 
-        // 2. Info Section
-        wsData.push(["Môn:", "", "", "Khóa học:", currentClass.schoolYear]);
-        wsData.push(["Lớp:", currentClass.name, "", "Bậc đào tạo:", "Trung cấp chuyên nghiệp"]);
-        wsData.push(["Ngành:", currentMajor?.name || "", "", "Loại hình đào tạo:", "Chính quy"]);
-        wsData.push([""]); // Spacer
+        // Table Header
+        wsData.push(["STT", "MSSV", "Họ", "Tên", "Ngày sinh", "Nơi sinh", "Điện thoại", "Ghi chú"]);
 
-        // 3. Table Header
-        wsData.push(["STT", "MSSV", "Họ", "Tên", "Ngày sinh", "Trạng thái", "Ghi chú"]);
-
-        // 4. Data Rows
+        // Data Rows
         sortedStudents.forEach((s, index) => {
             const parts = s.name.trim().split(' ');
             const firstName = parts.length > 0 ? parts[parts.length - 1] : '';
@@ -296,41 +304,124 @@ const StudentManager: React.FC = () => {
             let dobStr = s.dob;
             try { dobStr = format(parseLocal(s.dob), 'dd/MM/yyyy'); } catch {}
 
-            let statusStr = "Đang học";
-            if (s.status === 'reserved') statusStr = "Bảo lưu";
-            if (s.status === 'dropped') statusStr = "Nghỉ học";
-
             wsData.push([
                 index + 1,
                 s.studentCode,
                 lastName,
                 firstName,
                 dobStr,
-                statusStr,
+                s.pob || "",
+                s.phone || "",
                 "" // Ghi chú empty
             ]);
         });
 
+        // Add empty rows if list is short
         if (sortedStudents.length < 5) {
             for(let i=0; i< (5 - sortedStudents.length); i++) {
-                wsData.push([sortedStudents.length + i + 1, "", "", "", "", "", ""]);
+                wsData.push([sortedStudents.length + i + 1, "", "", "", "", "", "", ""]);
             }
         }
 
         const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-        // 5. Apply Merges
+        // --- MERGES ---
         if (!ws['!merges']) ws['!merges'] = [];
         ws['!merges'].push(
-            { s: { r: 0, c: 2 }, e: { r: 0, c: 4 } },
-            { s: { r: 3, c: 4 }, e: { r: 3, c: 5 } },
-            { s: { r: 4, c: 4 }, e: { r: 4, c: 5 } }
+            // Header Left
+            { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },
+            { s: { r: 1, c: 0 }, e: { r: 1, c: 3 } },
+            // Header Right
+            { s: { r: 0, c: 4 }, e: { r: 0, c: 7 } },
+            { s: { r: 1, c: 4 }, e: { r: 1, c: 7 } },
+            // Title
+            { s: { r: 3, c: 0 }, e: { r: 3, c: 7 } },
+            // Info
+            { s: { r: 5, c: 1 }, e: { r: 5, c: 3 } }, // Class name merge
+            { s: { r: 6, c: 1 }, e: { r: 6, c: 3 } }, // Major name merge
+            { s: { r: 5, c: 5 }, e: { r: 5, c: 7 } }, // School year merge
+            { s: { r: 6, c: 5 }, e: { r: 6, c: 7 } }, // Training level merge
         );
 
-        // 6. Column Widths
+        // --- COL WIDTHS ---
         ws['!cols'] = [
-            { wch: 5 }, { wch: 12 }, { wch: 25 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 20 }
+            { wch: 5 },  // STT
+            { wch: 12 }, // MSSV
+            { wch: 25 }, // Ho
+            { wch: 12 }, // Ten
+            { wch: 12 }, // Ngay sinh
+            { wch: 15 }, // Noi sinh
+            { wch: 15 }, // Dien thoai
+            { wch: 15 }  // Ghi chu
         ];
+
+        // --- STYLING (using xlsx-js-style) ---
+        const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:H1');
+        
+        // Define Borders
+        const borderStyle = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" }
+        };
+
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+            for (let C = range.s.c; C <= range.e.c; ++C) {
+                const cellRef = XLSX.utils.encode_cell({c: C, r: R});
+                if (!ws[cellRef]) {
+                     // Ensure empty cells in range have object for styling if inside table
+                     if (R >= 8) ws[cellRef] = { v: "", t: 's'};
+                     else continue;
+                }
+                
+                if (!ws[cellRef].s) ws[cellRef].s = {};
+
+                // Default Font
+                ws[cellRef].s.font = { name: "Times New Roman", sz: 11 };
+                ws[cellRef].s.alignment = { vertical: "center", wrapText: true };
+
+                // 1. Header Section (Rows 0-1)
+                if (R <= 1) {
+                    ws[cellRef].s.alignment = { horizontal: "center", vertical: "center" };
+                    ws[cellRef].s.font = { name: "Times New Roman", sz: 11, bold: true };
+                }
+                // Underline "Độc lập - Tự do - Hạnh phúc"
+                if (R === 1 && C === 4) {
+                    ws[cellRef].s.font = { name: "Times New Roman", sz: 11, bold: true, underline: true };
+                }
+
+                // 2. Title (Row 3)
+                if (R === 3) {
+                    ws[cellRef].s.font = { name: "Times New Roman", sz: 16, bold: true };
+                    ws[cellRef].s.alignment = { horizontal: "center", vertical: "center" };
+                }
+
+                // 3. Info Section (Rows 5-6)
+                if (R >= 5 && R <= 6) {
+                    ws[cellRef].s.font = { name: "Times New Roman", sz: 12 };
+                }
+
+                // 4. Table Header (Row 8)
+                if (R === 8) {
+                    ws[cellRef].s.border = borderStyle;
+                    ws[cellRef].s.font = { name: "Times New Roman", sz: 11, bold: true };
+                    ws[cellRef].s.alignment = { horizontal: "center", vertical: "center", wrapText: true };
+                    ws[cellRef].s.fill = { fgColor: { rgb: "E0E0E0" } };
+                }
+
+                // 5. Table Data (Row 9+)
+                if (R > 8) {
+                    ws[cellRef].s.border = borderStyle;
+                    // Center align for STT (0), MSSV (1), Date (4)
+                    if ([0, 1, 4].includes(C)) {
+                        ws[cellRef].s.alignment = { horizontal: "center", vertical: "center", wrapText: true };
+                    } else {
+                        ws[cellRef].s.alignment = { horizontal: "left", vertical: "center", wrapText: true };
+                    }
+                }
+            }
+        }
 
         XLSX.utils.book_append_sheet(wb, ws, "DanhSachHocSinh");
         XLSX.writeFile(wb, `DanhSach_${currentClass.name}.xlsx`);
