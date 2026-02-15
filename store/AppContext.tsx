@@ -71,10 +71,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const saved = localStorage.getItem('eduScheduleData');
       if (saved) {
           const parsed = JSON.parse(saved);
-          // Ensure arrays exist for older saved data
-          if (!parsed.documents) parsed.documents = [];
-          if (!parsed.templates) parsed.templates = [];
-          return parsed;
+          // Ensure arrays exist for older saved data (Compatibility check)
+          return {
+              ...INITIAL_DATA,
+              ...parsed,
+              teachers: parsed.teachers || [],
+              subjects: parsed.subjects || [],
+              classes: parsed.classes || [],
+              students: parsed.students || [],
+              schedules: parsed.schedules || [],
+              majors: parsed.majors || INITIAL_DATA.majors,
+              documents: parsed.documents || [],
+              templates: parsed.templates || []
+          };
       }
       return INITIAL_DATA;
     } catch (e) {
@@ -202,22 +211,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
      setState(prev => ({ ...prev, templates: prev.templates.filter(t => t.id !== id) }));
   };
 
-  // NEW: Load entire state (Restore)
+  // NEW: Load entire state (Restore) - Robust Version
   const loadData = (data: AppState) => {
-      // Validate structure roughly
-      if (data.teachers && data.subjects && data.classes && data.schedules) {
-          // Ensure arrays is initialized if restoring from old backup
-          if (!data.documents) data.documents = [];
-          if (!data.templates) data.templates = [];
-          setState(data);
+      if (data && typeof data === 'object') {
+          // Merge with INITIAL_DATA to ensure all fields (especially arrays like templates/documents) exist
+          // regardless of the backup version.
+          const robustData: AppState = {
+              ...INITIAL_DATA,
+              ...data,
+              // Force Arrays if they are null/undefined in backup
+              teachers: Array.isArray(data.teachers) ? data.teachers : [],
+              subjects: Array.isArray(data.subjects) ? data.subjects : [],
+              classes: Array.isArray(data.classes) ? data.classes : [],
+              students: Array.isArray(data.students) ? data.students : [],
+              schedules: Array.isArray(data.schedules) ? data.schedules : [],
+              majors: Array.isArray(data.majors) ? data.majors : INITIAL_DATA.majors,
+              documents: Array.isArray(data.documents) ? data.documents : [],
+              templates: Array.isArray(data.templates) ? data.templates : [],
+          };
+          
+          setState(robustData);
+          alert('Khôi phục dữ liệu thành công!');
       } else {
           alert('File dữ liệu không hợp lệ!');
       }
   };
 
-  // NEW: Reset to initial
+  // NEW: Delete all data (Empty state, but keep Majors config)
   const resetData = () => {
-    setState(INITIAL_DATA);
+    setState({
+        teachers: [],
+        subjects: [],
+        classes: [],
+        students: [],
+        schedules: [],
+        majors: INITIAL_DATA.majors, // Keep structural configuration
+        documents: [],
+        templates: []
+    });
+    // Clear auxiliary storage
+    try {
+        localStorage.removeItem('paid_completed_subjects');
+        localStorage.removeItem('manual_completed_subjects');
+        localStorage.removeItem('subject_progress_metadata');
+    } catch (e) {
+        console.error(e);
+    }
   };
 
   return (

@@ -18,9 +18,16 @@ export const parseLocal = (dateStr: string): Date => {
   return new Date(y, m - 1, d);
 };
 
-// Helper: Base64 string to ArrayBuffer (For Docxtemplater)
+// Helper: Base64 string to ArrayBuffer (For Docxtemplater & ExcelJS)
+// Updated to handle both Data URI strings and raw Base64 strings safely
 export const base64ToArrayBuffer = (base64: string) => {
-    const binaryString = window.atob(base64.split(',')[1]);
+    // Check if string has Data URI prefix (e.g., "data:application/vnd...;base64,")
+    const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+    
+    // Safety check for clean string
+    const cleanBase64 = base64Data.trim();
+    
+    const binaryString = window.atob(cleanBase64);
     const len = binaryString.length;
     const bytes = new Uint8Array(len);
     for (let i = 0; i < len; i++) {

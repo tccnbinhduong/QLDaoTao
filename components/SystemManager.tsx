@@ -53,7 +53,7 @@ const SystemManager: React.FC = () => {
   };
 
   const handleResetWithBackup = () => {
-      const confirmMsg = "CẢNH BÁO QUAN TRỌNG:\n\nBạn đang thực hiện xóa toàn bộ dữ liệu hệ thống. Hành động này không thể hoàn tác.\n\nĐể đảm bảo an toàn, hệ thống sẽ tự động lưu một bản dự phòng dữ liệu hiện tại trước khi xóa.\n\nBạn có chắc chắn muốn tiếp tục?";
+      const confirmMsg = "CẢNH BÁO QUAN TRỌNG:\n\nBạn đang thực hiện xóa toàn bộ dữ liệu hệ thống (bao gồm cả dữ liệu mẫu). Hành động này không thể hoàn tác.\n\nĐể đảm bảo an toàn, hệ thống sẽ tự động lưu một bản dự phòng dữ liệu hiện tại trước khi xóa.\n\nBạn có chắc chắn muốn tiếp tục?";
       if (window.confirm(confirmMsg)) {
           // 1. Auto Backup
           handleBackup();
@@ -61,7 +61,7 @@ const SystemManager: React.FC = () => {
           // 2. Reset with delay to ensure download starts
           setTimeout(() => {
               resetData();
-              alert("Đã sao lưu dữ liệu và reset hệ thống về mặc định.");
+              alert("Đã sao lưu và xóa toàn bộ dữ liệu hệ thống.");
           }, 500);
       }
   };

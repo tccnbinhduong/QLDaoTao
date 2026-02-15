@@ -3,9 +3,9 @@ import { useApp } from '../store/AppContext';
 import { checkConflict, calculateSubjectProgress, getSessionFromPeriod, parseLocal, determineStatus, getSessionSequenceInfo, generateId, base64ToArrayBuffer } from '../utils';
 import { ScheduleItem, ScheduleStatus, Teacher } from '../types';
 import { format, addDays, isSameDay, getWeek } from 'date-fns';
-import { vi } from 'date-fns/locale/vi';
+import { vi } from 'date-fns/locale';
 import { Calendar as CalendarIcon, Plus, ChevronRight, ChevronLeft, AlertCircle, Save, Trash2, FileSpreadsheet, ListFilter, X, Copy, Clipboard, Users, Download, BookOpen, Mail } from 'lucide-react';
-import *as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import saveAs from 'file-saver';
@@ -139,16 +139,51 @@ const ScheduleManager: React.FC = () => {
     });
   }, [subjects, classes, selectedClassId, schedules, editItem, formType]);
 
-  // NEW: Calculate Active Subjects for the current class (displayed in the new section)
+  // NEW: Calculate Active Subjects for the current class in CURRENT WEEK
+  // LOGIC UPDATE: Only show subjects that have schedules in current week AND NO schedules in previous weeks.
   const activeSubjectsSummary = useMemo(() => {
-    const classSchedules = schedules.filter(s => s.classId === selectedClassId && s.status !== ScheduleStatus.OFF);
-    const uniqueSubjectIds = Array.from(new Set(classSchedules.map(s => s.subjectId)));
+    // Determine current week range
+    const startOfWeek = weekStart;
+    const endOfWeek = addDays(weekStart, 6);
+    
+    // Normalize startOfWeek for comparison
+    const sStart = new Date(startOfWeek.getFullYear(), startOfWeek.getMonth(), startOfWeek.getDate());
+    const sEnd = new Date(endOfWeek.getFullYear(), endOfWeek.getMonth(), endOfWeek.getDate());
 
-    return uniqueSubjectIds.map(subId => {
+    // 1. Filter schedules in current week
+    const currentWeekSchedules = schedules.filter(s => {
+        if (s.classId !== selectedClassId || s.status === ScheduleStatus.OFF) return false;
+        
+        const date = parseLocal(s.date);
+        const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        
+        return d >= sStart && d <= sEnd;
+    });
+
+    const uniqueSubjectIds = Array.from(new Set(currentWeekSchedules.map(s => s.subjectId)));
+
+    // 2. Filter: Exclude subjects that have schedules BEFORE this week
+    const newSubjectIds = uniqueSubjectIds.filter(subId => {
+        const hasPriorSchedule = schedules.some(s => {
+            if (s.subjectId !== subId || s.classId !== selectedClassId || s.status === ScheduleStatus.OFF) return false;
+            
+            const date = parseLocal(s.date);
+            const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            
+            // Check if date is strictly before start of current week
+            return d < sStart;
+        });
+        
+        return !hasPriorSchedule;
+    });
+
+    return newSubjectIds.map(subId => {
         const sub = subjects.find(s => s.id === subId);
-        // Find main teacher (the one who taught the most recently added schedule for this subject)
-        const subjectSchedules = classSchedules.filter(s => s.subjectId === subId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        // Find main teacher from the schedule IN THIS WEEK
+        const subjectSchedules = currentWeekSchedules.filter(s => s.subjectId === subId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         const latestSchedule = subjectSchedules[0];
+        
         const teacher = teachers.find(t => t.id === latestSchedule?.teacherId);
         const cls = classes.find(c => c.id === selectedClassId);
 
@@ -162,7 +197,7 @@ const ScheduleManager: React.FC = () => {
             className: cls?.name || ''
         };
     });
-  }, [schedules, subjects, teachers, classes, selectedClassId]);
+  }, [schedules, subjects, teachers, classes, selectedClassId, weekStart]);
 
   // NEW: Group teachers by recommendation based on selected subject
   const currentSubjectId = editItem ? editItem.subjectId : formSubjectId;
@@ -606,185 +641,173 @@ const ScheduleManager: React.FC = () => {
     handleNextWeek();
   };
 
-  const handleExportExcel = () => {
-    const wb = XLSX.utils.book_new();
-    const data: any[] = [];
-    const merges: any[] = [];
+  const handleExportExcel = async () => {
     const currentClass = classes.find(c => c.id === selectedClassId);
+    if (!currentClass) return;
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Lịch Học');
+
+    // 0. Setup columns
+    worksheet.columns = [
+      { width: 10 }, // Session (Buổi)
+      { width: 6 },  // Period (Tiết)
+      { width: 25 }, // Mon
+      { width: 25 }, // Tue
+      { width: 25 }, // Wed
+      { width: 25 }, // Thu
+      { width: 25 }, // Fri
+      { width: 25 }, // Sat
+    ];
+
+    // 1. Title
+    const title = `LỊCH HỌC CỦA LỚP ${currentClass.name} TỪ NGÀY ${format(weekStart, 'dd/MM')} ĐẾN NGÀY ${format(addDays(weekStart, 6), 'dd/MM')}`.toUpperCase();
+    const titleRow = worksheet.addRow([title]);
+    worksheet.mergeCells('A1:H1');
+    titleRow.font = { name: 'Arial', size: 14, bold: true };
+    titleRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleRow.height = 30;
+
+    // 2. Header
+    const headerRow = worksheet.addRow(['Buổi', 'Tiết', ...weekDays.map(d => format(d, 'EEEE - dd/MM', { locale: vi }).toUpperCase())]);
+    headerRow.font = { name: 'Arial', size: 10, bold: true };
+    headerRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    headerRow.height = 30;
     
-    // 0. Title Row (New)
-    const title = `LỊCH HỌC CỦA LỚP ${currentClass?.name || ''} TỪ NGÀY ${format(weekStart, 'dd/MM')} ĐẾN NGÀY ${format(addDays(weekStart, 6), 'dd/MM')}`.toUpperCase();
-    data.push([title]); // Row 0
-
-    // 1. Header Row (Moved to Row 1)
-    const header = ['Buổi', 'Tiết', ...weekDays.map(d => format(d, 'EEEE - dd/MM', { locale: vi }).toUpperCase())];
-    data.push(header);
-
-    // 2. Data Rows (Periods 1-10)
-    PERIODS.forEach(p => {
-        const sessionName = p === 1 ? 'Sáng' : (p === 6 ? 'Chiều' : '');
-        const rowData: any[] = [sessionName, p];
-
-        weekDays.forEach((day, dayIndex) => {
-            const dateStr = format(day, 'yyyy-MM-dd');
-            const item = filteredSchedules.find(s => s.date === dateStr && s.startPeriod <= p && (s.startPeriod + s.periodCount) > p);
-            
-            if (item) {
-                if (item.startPeriod === p) {
-                    const subj = subjects.find(s => s.id === item.subjectId);
-                    const tea = teachers.find(t => t.id === item.teacherId);
-                    const seqInfo = getSessionSequenceInfo(item, schedules, subj?.totalPeriods);
-                    const displayCumulative = Math.min(seqInfo.cumulative, subj?.totalPeriods || seqInfo.cumulative);
-
-                    let cellText = `${subj?.name}`;
-                    if (item.status === ScheduleStatus.OFF) cellText += ` (NGHỈ)`;
-                    else if (item.type === 'exam') cellText = `THI: ${subj?.name}`;
-                    
-                    if (item.group) cellText += `\n(${item.group})`; // Group right after subject
-
-                    cellText += `\nGV: ${tea?.name || '---'}`;
-                    
-                    // Room and Progress on same line separated by |
-                    cellText += `\nPhòng: ${item.roomId} | Tiết: ${displayCumulative}/${subj?.totalPeriods}`;
-                    
-                    rowData.push(cellText);
-
-                    // Add Merge for Multi-period classes (Shifted by 1 row due to title)
-                    if (item.periodCount > 1) {
-                        merges.push({
-                            s: { r: p + 1, c: dayIndex + 2 }, // p+1 because title is row 0, header is row 1. But 'p' starts at 1. The data rows in 'data' array are index 2 onwards.
-                            // p=1 -> data index 2 (row 3 in Excel).
-                            // Wait, let's map strictly.
-                            // data[0] = Title
-                            // data[1] = Header
-                            // data[2] = Period 1
-                            // ...
-                            // data[11] = Period 10
-                            // So row index for Period p is (p + 1).
-                            
-                            e: { r: p + item.periodCount, c: dayIndex + 2 }
-                        });
-                    }
-                } else {
-                    rowData.push(null); 
-                }
-            } else {
-                rowData.push('');
-            }
-        });
-        data.push(rowData);
+    // Apply borders to header
+    headerRow.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFFFFFF' }
+      };
     });
 
-    // 3. Footer
-    data.push([]);
-    const footer1 = ["Sáng:", "", "Tiết 1: 7h30 - 8h15   Tiết 2: 8h15 - 9h00   Ra chơi: 30 phút   Tiết 3: 9h30 - 10h15   Tiết 4: 10h15 - 11h00"];
-    const footer2 = ["Chiều:", "", "Tiết 1: 13h15 - 14h00   Tiết 2: 14h00 - 14h45   Ra chơi: 15 phút   Tiết 3: 15h00 - 15h45   Tiết 4: 15h45 - 16h30"];
-    data.push(footer1);
-    data.push(footer2);
-
-    const ws = XLSX.utils.aoa_to_sheet(data);
-
-    // 4. Styling & Merges
-    if(!ws['!merges']) ws['!merges'] = [];
+    // 3. Grid Data
+    const borderStyle: Partial<ExcelJS.Borders> = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
     
-    // Title Merge (Row 0)
-    ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } });
+    const centerStyle: Partial<ExcelJS.Alignment> = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-    // Session Merges (Morning: Period 1-5 -> Rows 2-6. Afternoon: Period 6-10 -> Rows 7-11)
-    ws['!merges'].push({ s: { r: 2, c: 0 }, e: { r: 6, c: 0 } });
-    ws['!merges'].push({ s: { r: 7, c: 0 }, e: { r: 11, c: 0 } });
+    // Create rows 3 to 12 (10 periods)
+    for (let p = 1; p <= 10; p++) {
+       const row = worksheet.addRow(['', p]);
+       row.height = 60; // Set a reasonable height for content
+       
+       // Style the "Tiết" column (Col 2)
+       const periodCell = row.getCell(2);
+       periodCell.font = { bold: true };
+       periodCell.alignment = centerStyle;
+       periodCell.border = borderStyle;
+
+       // Style the "Buổi" column (Col 1)
+       const sessionCell = row.getCell(1);
+       sessionCell.border = borderStyle;
+    }
+
+    // Merge "Buổi" columns
+    // Morning: Period 1-5 (Rows 3-7)
+    worksheet.mergeCells('A3:A7');
+    const morningCell = worksheet.getCell('A3');
+    morningCell.value = 'SÁNG';
+    morningCell.alignment = { ...centerStyle, textRotation: 90 };
+    morningCell.font = { bold: true, size: 12 };
     
-    // Add dynamic class merges
-    ws['!merges'].push(...merges);
+    // Afternoon: Period 6-10 (Rows 8-12)
+    worksheet.mergeCells('A8:A12');
+    const afternoonCell = worksheet.getCell('A8');
+    afternoonCell.value = 'CHIỀU';
+    afternoonCell.alignment = { ...centerStyle, textRotation: 90 };
+    afternoonCell.font = { bold: true, size: 12 };
 
-    // Footer merges (Shifted by 1 row)
-    const footerRowStart = 13;
-    ws['!merges'].push({ s: { r: footerRowStart, c: 2 }, e: { r: footerRowStart, c: 7 } });
-    ws['!merges'].push({ s: { r: footerRowStart + 1, c: 2 }, e: { r: footerRowStart + 1, c: 7 } });
+    // Fill Data
+    for (let dayIndex = 0; dayIndex < weekDays.length; dayIndex++) {
+        const day = weekDays[dayIndex];
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const colIndex = dayIndex + 3; // A=1, B=2, C=3 (Monday)
 
-    // APPLY STYLES
-    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
-    for (let R = range.s.r; R <= 11; ++R) { // Only style the grid part (Rows 0-11)
-        for (let C = range.s.c; C <= range.e.c; ++C) {
-            const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-            if (!ws[cellRef]) continue;
+        for (let p = 1; p <= 10; p++) {
+            const rowIndex = p + 2; // Title(1) + Header(1) + p
+            const cell = worksheet.getCell(rowIndex, colIndex);
+            
+            // Apply default border
+            cell.border = borderStyle;
+            cell.alignment = { vertical: 'middle', wrapText: true, horizontal: 'left' }; 
 
-            if (!ws[cellRef].s) ws[cellRef].s = {};
+            // Find schedule
+            const item = filteredSchedules.find(s => s.date === dateStr && s.startPeriod === p);
+            
+            if (item) {
+                // Determine content
+                const subj = subjects.find(s => s.id === item.subjectId);
+                const tea = teachers.find(t => t.id === item.teacherId);
+                const seqInfo = getSessionSequenceInfo(item, schedules, subj?.totalPeriods);
+                const displayCumulative = Math.min(seqInfo.cumulative, subj?.totalPeriods || seqInfo.cumulative);
 
-            // Default Style (Borders for Grid)
-            ws[cellRef].s.font = { name: "Arial", sz: 10 };
-            ws[cellRef].s.alignment = { wrapText: true, vertical: "center" };
-            ws[cellRef].s.border = {
-                top: { style: "thin", color: { rgb: "000000" } },
-                bottom: { style: "thin", color: { rgb: "000000" } },
-                left: { style: "thin", color: { rgb: "000000" } },
-                right: { style: "thin", color: { rgb: "000000" } }
-            };
+                let cellText = `${subj?.name}`;
+                if (item.status === ScheduleStatus.OFF) cellText += ` (NGHỈ)`;
+                else if (item.type === 'exam') cellText = `THI: ${subj?.name}`;
+                
+                if (item.group) cellText += `\n(${item.group})`; 
 
-            // 0. Title (Row 0)
-            if (R === 0) {
-                 ws[cellRef].s.font = { name: "Arial", sz: 14, bold: true };
-                 ws[cellRef].s.alignment = { horizontal: "center", vertical: "center" };
-                 ws[cellRef].s.fill = { fgColor: { rgb: "FFFFFF" } };
-                 ws[cellRef].s.border = {}; // No border for title
-            }
+                cellText += `\nGV: ${tea?.name || '---'}`;
+                cellText += `\nPhòng: ${item.roomId} | Tiết: ${displayCumulative}/${subj?.totalPeriods}`;
+                
+                cell.value = cellText;
+                cell.font = { name: 'Arial', size: 10, bold: true };
 
-            // 1. Headers (Row 1)
-            if (R === 1) {
-                ws[cellRef].s.font = { name: "Arial", sz: 10, bold: true };
-                ws[cellRef].s.alignment = { horizontal: "center", vertical: "center", wrapText: true };
-                ws[cellRef].s.fill = { fgColor: { rgb: "FFFFFF" } }; // Default white or transparent
-            }
+                // Colors
+                let argb = 'FFFFFFFF'; // White
+                if (item.status === ScheduleStatus.OFF) argb = 'FFE0E0E0'; // Gray
+                else if (item.type === 'exam') argb = 'FFFFF2CC'; // Light Yellow
+                else {
+                    if (seqInfo.isFirst) argb = 'FFFCE4D6'; // Orange
+                    else if (seqInfo.isLast) argb = 'FFF8CECC'; // Red
+                    else argb = 'FFDDEBF7'; // Blue
+                }
+                
+                cell.fill = {
+                    type: 'pattern',
+                    pattern: 'solid',
+                    fgColor: { argb: argb }
+                };
 
-            // 2. Buổi & Tiết Columns (Col 0, 1) - Bold
-            if (C === 0 || C === 1) {
-                ws[cellRef].s.font = { name: "Arial", sz: 10, bold: true };
-                ws[cellRef].s.alignment = { horizontal: "center", vertical: "center", wrapText: true };
-            }
-
-            // 3. Data Cells (Row 2-11, Col 2-7) - Determine Color
-            if (R >= 2 && R <= 11 && C >= 2) {
-                 // Re-calculate the item for this cell to determine color
-                 const period = R - 1; // Row 2 is Period 1
-                 const dayIndex = C - 2; // Col 2 is Day 0
-                 const day = weekDays[dayIndex];
-                 const dateStr = format(day, 'yyyy-MM-dd');
-                 const item = filteredSchedules.find(s => s.date === dateStr && s.startPeriod === period);
-
-                 if (item) {
-                      // Apply Bold for Subject (Line 1) via rich text? ExcelJS supports rich text better. 
-                      // SheetJS/xlsx-js-style mostly supports basic font.
-                      // We will bold the whole cell if it's a class.
-                      ws[cellRef].s.font = { name: "Arial", sz: 10, bold: true }; // Bold text for readability
-
-                      const subj = subjects.find(s => s.id === item.subjectId);
-                      const seqInfo = getSessionSequenceInfo(item, schedules, subj?.totalPeriods);
-
-                      if (item.status === ScheduleStatus.OFF) {
-                          ws[cellRef].s.fill = { fgColor: { rgb: "E0E0E0" } }; // Gray
-                      } else if (item.type === 'exam') {
-                          ws[cellRef].s.fill = { fgColor: { rgb: "FFF2CC" } }; // Light Yellow
-                      } else {
-                          // COLOR LOGIC: First = Orange, Last = Red, Middle = Blue
-                          if (seqInfo.isFirst) {
-                              ws[cellRef].s.fill = { fgColor: { rgb: "FCE4D6" } }; // Light Orange
-                          } else if (seqInfo.isLast) {
-                               ws[cellRef].s.fill = { fgColor: { rgb: "F8CECC" } }; // Light Red
-                          } else {
-                               ws[cellRef].s.fill = { fgColor: { rgb: "DDEBF7" } }; // Light Blue
-                          }
-                      }
-                 }
+                // Merge
+                if (item.periodCount > 1) {
+                    const startRow = rowIndex;
+                    const endRow = rowIndex + item.periodCount - 1;
+                    worksheet.mergeCells(startRow, colIndex, endRow, colIndex);
+                }
             }
         }
     }
 
-    ws['!cols'] = [
-        { wch: 8 }, { wch: 5 }, { wch: 25 }, { wch: 25 }, { wch: 25 }, { wch: 25 }, { wch: 25 }, { wch: 25 },
-    ];
+    // 4. Footer
+    const footerStartRow = 14;
+    const f1 = worksheet.addRow(['', '', "Sáng: Tiết 1: 7h30 - 8h15   Tiết 2: 8h15 - 9h00   Ra chơi: 30 phút   Tiết 3: 9h30 - 10h15   Tiết 4: 10h15 - 11h00"]);
+    worksheet.mergeCells(`C${footerStartRow}:H${footerStartRow}`);
+    f1.getCell(3).font = { italic: true, size: 9 };
+    f1.getCell(3).alignment = { horizontal: 'center' };
 
-    XLSX.utils.book_append_sheet(wb, ws, "Lịch Học");
-    XLSX.writeFile(wb, `Lich_Hoc_${classes.find(c => c.id === selectedClassId)?.name}_Tuan_${weekNumber}.xlsx`);
+    const f2 = worksheet.addRow(['', '', "Chiều: Tiết 1: 13h15 - 14h00   Tiết 2: 14h00 - 14h45   Ra chơi: 15 phút   Tiết 3: 15h00 - 15h45   Tiết 4: 15h45 - 16h30"]);
+    worksheet.mergeCells(`C${footerStartRow + 1}:H${footerStartRow + 1}`);
+    f2.getCell(3).font = { italic: true, size: 9 };
+    f2.getCell(3).alignment = { horizontal: 'center' };
+
+    // Export
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, `Lich_Hoc_${currentClass.name}_Tuan_${weekNumber}.xlsx`);
   };
 
   const handleExportInvitation = (item: any) => {
@@ -827,22 +850,16 @@ const ScheduleManager: React.FC = () => {
           const rooms = Array.from(new Set(relevantSchedules.map(s => s.roomId))).join(', ');
 
           // Determine Location & Map Link based on Class Name
-          // Strip parentheses to handle names like "Class Name (1)"
-          const cleanName = currentClass.name.trim().replace(/\)$/, '');
-          const lastChar = cleanName.slice(-1);
+          // Default to Facility 1 (Main)
+          let location = "Cơ sở 1 - Số 79, ĐT743, phường Bình Hoà, TP. Thuận An, Bình Dương";
+          let mapLink = "https://maps.app.goo.gl/Y9ubh6zCUp6USaun8";
 
-          let location = "";
-          let mapLink = "";
-
-          if (lastChar === '1') {
-             location = "Cơ sở 1 - số 79, ĐT743, phường Bình Hoà, TP.HCM";
-             mapLink = "https://maps.app.goo.gl/Y9ubh6zCUp6USaun8";
-          } else if (lastChar === '2') {
-             location = "Cơ sở 2 - số 470, tổ 3, Ba Đình, phường Tân Đông Hiệp, TP.HCM";
+          // Check for Facility 2 indicators
+          // Logic: Check if name ends with '2', '(2)', or contains 'Cơ sở 2'
+          const nameToCheck = currentClass.name.trim();
+          if (nameToCheck.endsWith('2') || nameToCheck.endsWith('(2)') || nameToCheck.toLowerCase().includes('cơ sở 2')) {
+             location = "Cơ sở 2 - Số 470, tổ 3, Ba Đình, phường Tân Đông Hiệp, TP. Dĩ An, Bình Dương";
              mapLink = "https://maps.app.goo.gl/8Vwf8gMnPuMGpNgA8";
-          } else {
-             location = "Cơ sở chính"; // Default fallback
-             mapLink = "";
           }
 
           // Format Currency
@@ -1065,7 +1082,9 @@ const ScheduleManager: React.FC = () => {
                  <tbody className="divide-y divide-gray-100">
                      {activeSubjectsSummary.length === 0 ? (
                          <tr>
-                             <td colSpan={6} className="p-6 text-center text-gray-400 italic">Chưa có môn học nào được xếp lịch.</td>
+                             <td colSpan={6} className="p-6 text-center text-gray-400 italic">
+                                 Chưa có môn học nào được xếp lịch {weekNumber ? `trong tuần ${weekNumber}` : ''}.
+                             </td>
                          </tr>
                      ) : (
                          activeSubjectsSummary.map((item, index) => (
